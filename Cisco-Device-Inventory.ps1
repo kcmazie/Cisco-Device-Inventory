@@ -66,7 +66,6 @@ Clear-Host
 #--[ Variables ]---------------------------------------------------------------
 $DateTime = Get-Date -Format MM-dd-yyyy_HHmmss 
 $Today = Get-Date -Format MM-dd-yyyy 
-$TestFile = "" 
 
 #==[ RUNTIME TESTING OPTION VARIATIONS ]========================================
 #$DeviceType = "Router"
@@ -74,18 +73,16 @@ $TestFile = ""
 #$DeviceType = "VG"
 $DeviceType = "Switch"
 $Console = $true
-$EnableGUI = $False        #--[ No GUI yet ]--
 $EnableExcel = $true
 $EnableSQLite = $false     #--[ No SQLlite yet ]--
 $Script:Debug = $True
-$ReadExcel = $True
-If($Script:Debug){
-    $Console = $true
-}
-$SafeUpdate = $false #True
+$SafeUpdate = $True
 $StayCurrent = $False
 #==============================================================================
 
+If($Script:Debug){
+    $Console = $true
+}
 #--[ Upgrade Criticality Chart ]-----------------------------------------------
     [int]$PriorityCritical = 1   #-- Critical Priority = Less than 2 years from LDOS --
     [int]$PriorityHigh = 3       #-- High Priority = Less than 4 years from LDOS --
@@ -102,6 +99,7 @@ Function LoadDebug ($Config){
 }
 
 Function LoadConfig ($Config){
+    If ($Config -ne "failed"){
     $XmlOption = New-Object -TypeName psobject 
     $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "Domain" -Value $Config.Settings.General.Domain
     $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "SourcePath" -Value $Config.Settings.General.SourcePath 
@@ -113,12 +111,45 @@ Function LoadConfig ($Config){
     $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "WAPPass" -Value $Config.Settings.Credentials.WAPPass
     $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "AltUser" -Value $Config.Settings.Credentials.AltUser
     $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "AltPass" -Value $Config.Settings.Credentials.AltPass
+    }Else{
+        StatusMsg "MISSING XML CONFIG FILE.  File is required.  Script aborted..." " Red" $True
+<#--[ External XML config file example ]-----------------------------------
+# --[ To be named the same as the script and located in the same folder as the script ]--
+
+<?xml version="1.0" encoding="utf-8"?>
+<Settings>
+    <General>
+        <SmtpServer>mailserver.company.org</SmtpServer>
+        <SmtpPort>25</SmtpPort>
+        <RecipientEmail>InformationTechnology@company.org</RecipientEmail>
+		<SourcePath>C:\folder</SourcePath>
+		<ExcelSourceFile>+NetworkedDevice-Master-Inventory.xlsx</ExcelSourceFile>
+		<ExcelWorkingCopy>NetworkedDevice-Master-Inventory.xlsx</ExcelWorkingCopy>
+		<Domain>company.org</Domain>
+    </General>
+    <Credentials>
+		<PasswordFile>c:\AESPass.txt</PasswordFile>
+		<KeyFile>c:\AESKey.txt</KeyFile>
+		<WAPUser>admin</WAPUser>
+		<WAPPass>wappass</WAPPass>
+        <AltUser>user1</AltUser>
+		<AltPass>userpass1</AltPass>
+	</Credentials>	
+	<Recipients>
+    	<Recipient>me@comapny.org</Recipient>
+       	<Recipient>you@comapny.org</Recipient>
+       	<Recipient>them@comapny.org</Recipient>
+    </Recipients>
+</Settings> 
+
+#>
+    }
     Return $XmlOption
 }
 
 Function Write2Excel ($WorkSheet,$Row,$Col,$NewData,$Format,$Debug){
     $Header = $WorkSheet.Cells.Item(3,$Col).Text  
-    $WorkSheet.UsedRange.Rows.Item($Row).Interior.ColorIndex = 20  #--[ Sets row color to pale blue to denote which is being worked on ]--
+   # $WorkSheet.UsedRange.Rows.Item($Row).Interior.ColorIndex = 20  #--[ Sets row color to pale blue to denote which is being worked on ]--
     
     If ($WorkSheet.Cells.Item($Row,3).Text -like "*ISSUES (Ping OK)*"){
         $WorkSheet.UsedRange.Rows.Item($Row).Interior.ColorIndex = 15  #--[ Background set to grey if ping OK but logon fails ]--
@@ -132,7 +163,7 @@ Function Write2Excel ($WorkSheet,$Row,$Col,$NewData,$Format,$Debug){
         write-host "- New Data        :"$NewData -ForegroundColor Green
     }
     
-    If ($Script:SpreadSheet -eq "New"){                                             #--[ Creating a new spreadsheet, set all cells to black ]--
+    If ($Script:NewSpreadsheet){                                                    #--[ Creating a new spreadsheet, set all cells to black ]--
         $Worksheet.Cells($Row, $Col).Font.Bold = $False
         $Worksheet.Cells($Row, $Col).Font.ColorIndex = 0                            #--[ Black ]--    
         $Existing = ""   
@@ -215,8 +246,8 @@ Function Write2Excel ($WorkSheet,$Row,$Col,$NewData,$Format,$Debug){
     } 
 }
 
-Function StatusMsg ($Msg, $Color){
-    If ($Script:Debug){Write-Host "-- Script Status: $Msg" -ForegroundColor $Color}
+Function StatusMsg ($Msg, $Color, $Debug){
+    If ($Debug){Write-Host "-- Script Status: $Msg" -ForegroundColor $Color}
 }
 
 Function CallPlink ($IP,$command,$Plver,$DeviceType){
@@ -252,48 +283,48 @@ Function CallPlink ($IP,$command,$Plver,$DeviceType){
         # plink-v73.exe -ssh -pw $password $username@$IP #-batch #"exit" #*>&1
         # Start-Sleep -Milliseconds 500
         #------------------------------------------------------------
-        StatusMsg "Plink IP: $IP" "Magenta"
+        StatusMsg "Plink IP: $IP" "Magenta" $Debug
         #$test = @(plink-v73.exe -ssh -no-antispoof -pw $Password $username@$IP $command ) #*>&1)
         $test = @(plink-v73.exe -ssh -no-antispoof -batch -pw $Password $username@$IP $command *>&1)
         If ($test -like "*abandoned*"){
-            StatusMsg "Switching Plink version" "Magenta"
+            StatusMsg "Switching Plink version" "Magenta" $Debug
             $SwitchPlink = $true
         }Else{
-            StatusMsg 'Plink version test passed' 'Magenta'
+            StatusMsg 'Plink version test passed' 'Magenta' $Debug
         }
         If ($SwitchPlink){
             $Msg = 'Executing Plink v52 (Command = '+$Command+')'
-            StatusMsg $Msg 'Magenta'
+            StatusMsg $Msg 'Magenta' $Debug
             $Result = @(plink-v52.exe -ssh -no-antispoof -batch -pw $Password $username@$IP $command *>&1) 
         }Else{
             $Msg = 'Executing Plink v73 (Command = '+$Command+')'
-            StatusMsg $Msg 'Magenta'
+            StatusMsg $Msg 'Magenta' $Debug
             $Result = @(plink-v73.exe -ssh -no-antispoof -batch -pw $Password $username@$IP $command *>&1) 
 #            $Result = @(plink-v73.exe -ssh -t -pw $Password $username@$IP $command *>&1) 
             If ($Result -like "*denied*"){
                 Start-Sleep -MilliSeconds 500
-                StatusMsg "--- ACCESS DENIED ---" "Red"
-                StatusMsg "Attempting alternate credentials..." "cyan"
+                StatusMsg "--- ACCESS DENIED ---" "Red" $Debug
+                StatusMsg "Attempting alternate credentials..." "cyan" $Debug
                 $AltUser = $ExtOption.AltUser
                 $Result = @(plink-v73.exe -ssh -no-antispoof -batch -pw $ExtOption.AltPass "$AltUser@$IP" $command *>&1) 
                 If ($Result -like "*connection*"){
                     Start-Sleep -MilliSeconds 500
-                    StatusMsg "Re-Executing Plink v73 due to failed connection..." "Red"
+                    StatusMsg "Re-Executing Plink v73 due to failed connection..." "Red" $Debug
                     $Result = @(plink-v73.exe -ssh -no-antispoof -batch -pw $Password $username@$IP $command *>&1) 
                 }
             }
         }
         If ($Result -like "*denied*"){
             Start-Sleep -MilliSeconds 500
-            StatusMsg "--- ACCESS DENIED ---" "Red"
-            StatusMsg "--- ACCESS HAS FAILED ---" "Red"
+            StatusMsg "--- ACCESS DENIED ---" "Red" $Debug
+            StatusMsg "--- ACCESS HAS FAILED ---" "Red" $Debug
             $Result = "ACCESS-DENIED"
         }Else{
-            StatusMsg "Data collected... Parsing..." "Magenta"
+            StatusMsg "Data collected... Parsing..." "Magenta" $Debug
         }
         Return $Result
     }Else{
-        StatusMsg "Pre-Plink PING check FAILED" "Red"
+        StatusMsg "Pre-Plink PING check FAILED" "Red" $Debug
     }
 } 
 
@@ -341,12 +372,12 @@ Function GetEOLDate ($ModelNum){    #--[ Formatted as EOL,EOS,LDOS.  Note that F
 
 Function Open-Excel ($Excel,$ExcelWorkingCopy,$SheetName,$Console) {
     If (Test-Path -Path $ExcelWorkingCopy -PathType Leaf){
-        $Script:SpreadSheet = "Existing"
+        $Script:NewSpreadsheet = $False
         $WorkBook = $Excel.Workbooks.Open($ExcelWorkingCopy)
         $WorkSheet = $Workbook.WorkSheets.Item($SheetName)
         $WorkSheet.activate()
     }Else{
-        $Script:SpreadSheet = "New"
+        $Script:NewSpreadsheet = $True
         $Workbook = $Excel.Workbooks.Add()
         $Worksheet = $Workbook.Sheets.Item(1)
         $Worksheet.Activate()
@@ -399,11 +430,11 @@ Function Open-Excel ($Excel,$ExcelWorkingCopy,$SheetName,$Console) {
                 $Range = $WorkSheet.Range(("A3"),("AE3")) 
             }
             "Switch" {
-                $WorkSheet.cells.Item(3,$Col++) = "Port Count"       # AB
-                $WorkSheet.cells.Item(3,$Col++) = "Stack Sw #"       # AC   
-                $WorkSheet.cells.Item(3,$Col++) = "Date Inspected"   # AD          
+                $WorkSheet.cells.Item(3,$Col++) = "Port Count"       # AC
+                $WorkSheet.cells.Item(3,$Col++) = "Stack Sw #"       # AD   
+                $WorkSheet.cells.Item(3,$Col++) = "Date Inspected"   # AE          
                 $Worksheet.Name = "Switches"
-                $Range = $WorkSheet.Range(("A3"),("AD3")) 
+                $Range = $WorkSheet.Range(("A3"),("AE3")) 
             }
             "VG" {
                 $WorkSheet.cells.Item(3,$Col++) = "Port Count"       # AC
@@ -498,12 +529,13 @@ If (Test-Path $ConfigFile){                          #--[ Error out if configura
     [xml]$Config = Get-Content $ConfigFile           #--[ Read & Load XML ]--  
     $ExtOption = LoadConfig $Config 
 }Else{
+    LoadConfig "failed"
     StatusMsg "MISSING XML CONFIG FILE.  File is required.  Script aborted..." " Red" $Debug
     break;break;break
 }
 
 If ($Debug){
-    $ExtOption            #--[ In debug mode write external config settings out to console ]--                        
+#    $ExtOption            #--[ In debug mode write external config settings out to console ]--                        
 }
 
 If ($Null -eq $ExtOption.PasswordFile){
@@ -514,100 +546,64 @@ If ($Null -eq $ExtOption.PasswordFile){
 $ExcelWorkingCopy = $PSScriptRoot+"\"+$ExtOption.ExcelWorkingCopy
 $ExcelSourceFile = $ExtOption.SourcePath+"\"+$ExtOption.ExcelSourceFile
 
-#--[ Kill any instances of Excell opned by PowerShell to avoid issues ]--
+#--[ Kill any instances of Excel opened by PowerShell to avoid issues ]--
 $ProcID = Get-CimInstance Win32_Process | where {$_.name -like "*excel*"}
 ForEach ($ID in $ProcID){
     Foreach ($Proc in (get-process -id $id.ProcessId)){
         if (($ID.CommandLine -like "*/automation -Embedding") -Or ($proc.MainWindowTitle -like "$ExcelWorkingCopy*")){
             Stop-Process -ID $ID.ProcessId -Force
-            StatusMsg "Killing any existing open instance of spreadsheet..." "Red"
+            StatusMsg "Killing any existing open instance of spreadsheet..." "Red" $Debug
             Start-Sleep -Milliseconds 100
         }
     }
 }
 
-$Excel = New-Object -ComObject Excel.Application                                #--[ Create new Excel COM object ]--
-StatusMsg "Creating new Excel COM object..." "Magenta"
-$UseText = $False
-
-If (Test-Path -Path $ExcelWorkingCopy -PathType Leaf){                          #--[ Test for local spreadsheet ]--
-    StatusMsg "Spreadsheet working copy was found..." "Green"
-    If ($StayCurrent){
-        If (Test-Path -Path $ExcelSourceFile -PathType Leaf){                   #--[ Test for source file ]--
-            StatusMsg "Master source file is available..." "Green"
-            If (((Get-Item $ExcelSourceFile -ErrorAction silentlycontinue).LastWriteTime) -ne (Get-Item $ExcelWorkingCopy -ErrorAction silentlycontinue).LastWriteTime){
-                StatusMsg "Excel working copy is out of date, copying from source..." "Magenta"
-                Copy-Item -Path $ExcelSourceFile  -Destination $ExcelWorkingCopy -force -passthru
-            }Else{
-                StatusMsg "Spreadsheet working copy is up to date..." "Green"
-                StatusMsg "Loading existing working copy of spreadsheet from script folder..." "Magenta"
-            }
-        }
-    }Else{
-        StatusMsg "Loading existing working copy of spreadsheet from script folder..." "Green"
+Switch ($DeviceType){   #--[ Select which text file to use according to device type ]--
+    "WAP" {
+        StatusMsg "--- Processing Wireless Access Points ---" "Yellow" $Debug
+        $ListFileName = "$PSScriptRoot\WAP-IPlist.txt"
+        $SheetName = "Wireless AP"
+        $IPList = @()
     }
-}Else{
-    StatusMsg "Spreadsheet working copy was not found..." "Yellow"
-    If (Test-Path -Path $ExcelSourceFile -PathType Leaf){                   #--[ Test for source file ]--
-        StatusMsg "Master source file is available..." "Green" 
-        Try{
-            If ($Debug){  #-[ When in debug mode display copy results ]--
-                Copy-Item -Path $ExcelSourceFile -Destination $ExcelWorkingCopy -force -passthru -ErrorAction Stop
-            }Else{
-                Copy-Item -Path $ExcelSourceFile -Destination $ExcelWorkingCopy -force -ErrorAction Stop
-            }
-        }Catch{
-            StatusMsg "Copy of master to local failed..." "Red"
-            StatusMsg "Cannot continue.  Exiting..." "Red"
-            Break;Break;Break 
-        }
-        StatusMsg "Loading existing working copy of spreadsheet from script folder..." "Magenta"
-    }Else{
-        StatusMsg "Master source file not found..." "Red"
-        StatusMsg "Unable to update local working copy from master..." "Red"
-        StatusMsg "Attempting to locate IP text file..." "Yellow"
-        $UseText = $True        
+    "VG" {
+        StatusMsg "--- Processing Cisco Voice Gateways ---" "Yellow" $Debug
+        $ListFileName = "$PSScriptRoot\VG-IPlist.txt"
+        $SheetName = "Voice Gateways (VG)"
+    }
+    "Router" {
+        StatusMsg "--- Processing Cisco Routers ---" "Yellow" $Debug
+        $SheetName = "Routers"
+        $ListFileName = "$PSScriptRoot\Router-IPlist.txt"
+    }
+    "Switch" {
+        StatusMsg "--- Processing Cisco Switches ---" "Yellow" $Debug
+        $SheetName = "Switches"
+        $ListFileName = "$PSScriptRoot\Switch-IPlist.txt"
+    }
+    Default {
+        StatusMsg "--- Processing Cisco Switches ---" "Yellow" $Debug
+        $SheetName = "Switches"
+        $ListFileName = "$PSScriptRoot\Switch-IPlist.txt"
     }
 }
-
-If ($SafeUpdate -and (!($UseText))){
-    StatusMsg "Safe-Update Enabled. Creating a backup copy of the working spreadsheet..." "Green"
-    $Backup = $DateTime+"_"+$ExcelWorkingCopy
-    Copy-Item -Path "$PSScriptRoot\$ExcelWorkingCopy"  -Destination "$PSScriptRoot\$Backup"
+ 
+If ($EnableExcel){  
+    $Excel = New-Object -ComObject Excel.Application                                #--[ Create new Excel COM object ]--
+    StatusMsg "Preparing new Excel COM object..." "Magenta" $Debug
+    $Excel.Visible = $True
 }
 
-If (Test-Path -Path $TestFileName){   #--[ If this file exists the IP list will be pulled from it ]--
-    $ListFileName = $TestFileName
-}Else{  #--[ Select which text file to use ]--
-    Switch ($DeviceType){
-        "WAP" {
-            StatusMsg "--- Processing Wireless Access Points ---" "Yellow"
-            $ListFileName = "$PSScriptRoot\WAP-IPlist.txt"
-            $SheetName = "Wireless AP"
-            $IPList = @()
-        }
-        "VG" {
-            StatusMsg "--- Processing Cisco Voice Gateways ---" "Yellow"
-            $ListFileName = "$PSScriptRoot\VG-IPlist.txt"
-            $SheetName = "Voice Gateways (VG)"
-        }
-        "Router" {
-            StatusMsg "--- Processing Cisco Routers ---" "Yellow"
-            $SheetName = "Routers"
-            $ListFileName = "$PSScriptRoot\Router-IPlist.txt"
-        }
-        "Switch" {
-            StatusMsg "--- Processing Cisco Switches ---" "Yellow"
-            $SheetName = "Switches"
-            $ListFileName = "$PSScriptRoot\Switch-IPlist.txt"
-        }
-    }
-}
-
-If (Test-Path -Path $ListFileName){  #--[ Verify that a text file exists and pull IP's from it then create a new spreadsheet.  Default option. ]--
+$IPList  = @()
+If (Test-Path -Path $ListFileName){  #--[ Verify that a text file exists and pull IP's from it then create a new spreadsheet. ]--
     $LoadList = Get-Content $ListFileName  
-    $Row = 3
-    ForEach ($Item in $LoadList){  #--[ Clean up list prior to processing ]--
+    $Row = 4   
+    StatusMsg "IP text list was found, loading IP list from it..." "green" $Debug
+    If ($EnableExcel){  
+        StatusMsg "Creating new Spreadsheet..." "green" $Debug
+        $WorkSheet = Open-Excel $Excel "TempExcel" $SheetName $Console 
+        $Row = 4
+    }
+    ForEach ($Item in $LoadList){              #--[ Clean up list prior to processing ]--
         #--[ Format is IP;facility;Address;IDF;description.  Semi-Colon delimited.  Lines starting with # are ignored. ]--
         If  ($Item.Split(";")[0] -ne "#"){
             If ($Item.Split(";").Count -gt 1){
@@ -616,35 +612,86 @@ If (Test-Path -Path $ListFileName){  #--[ Verify that a text file exists and pul
                 $IPList += $Item+";;;;;"+$Row  #--[ Processing a list of only IP addresses ]--
             }
         }
+        $Worksheet.Cells.Item($Row,1) = $Item
         $Row++
     }
-    StatusMsg "IP text list was found, loading IP list from it..." "green" 
-    StatusMsg "Creating new Spreadsheet..." "green"
-    If ($EnableExcel){   
-        $Excel.Visible = $True
-        $WorkSheet = Open-Excel $Excel "TempExcel" $SheetName $Console
-        $Row = 4
-    }
+    $Script:NewSpreadsheet = $True
+    StatusMsg "Renaming IP text list file to .OLD..." "Magenta"
+    Move-Item -Path $ListFileName -Destination ($ListFileName+".old") 
+
+
 }Else{  #--[ If no text file exists try to pull IPs from Excel ]--
     StatusMsg "IP text list not found, attempting to process spreadsheet..." "cyan"
-    If (($EnableExcel) -or ($ReadExcel)){      
-        If (Test-Path -Path $ExcelWorkingCopy -PathType Leaf){
-            If ($Console -and $ReadExcel){
-                StatusMsg "Spreadsheet working copy located..." "Magenta"
-                $Excel.Visible = $False
-            }Else{
-                $Excel.Visible = $True
-            }        
-            $WorkSheet = Open-Excel $Excel $ExcelWorkingCopy $SheetName $Console   #--[ Open the existing spreadsheet if detected. ]--    
-        }Else{ 
-            StatusMsg "Existing spreadsheet not found, Nothing to process.  Exiting..." "Red"
-            Break       
+    If (Test-Path -Path $ExcelWorkingCopy -PathType Leaf){                          #--[ Test for local spreadsheet ]--
+        StatusMsg "Spreadsheet working copy was found..." "Green"
+        If ($StayCurrent){
+            If (Test-Path -Path $ExcelSourceFile -PathType Leaf){                   #--[ Test for source file ]--
+                StatusMsg "Master source file is available..." "Green"
+                If (((Get-Item $ExcelSourceFile -ErrorAction silentlycontinue).LastWriteTime) -ne (Get-Item $ExcelWorkingCopy -ErrorAction silentlycontinue).LastWriteTime){
+                    StatusMsg "Excel working copy is out of date, copying from source..." "Magenta"
+                    Copy-Item -Path $ExcelSourceFile  -Destination $ExcelWorkingCopy -force -passthru
+                }Else{
+                    StatusMsg "Spreadsheet working copy is up to date..." "Green"
+                    StatusMsg "Loading existing working copy of spreadsheet from script folder..." "Magenta"
+                }
+            }
+        }Else{
+            $Failure = $False
         }
+    }Else{
+        StatusMsg "Spreadsheet working copy was not found..." "Yellow"
+        If (Test-Path -Path $ExcelSourceFile -PathType Leaf){                   #--[ Test for source file ]--
+            StatusMsg "Master source file is available..." "Green"
+            Try{
+                If ($Debug){ 
+                    StatusMsg "Attempting to copy new working file from master source (with debug info)..." "Magenta"
+                    Copy-Item -Path $ExcelSourceFile -Destination $ExcelWorkingCopy -force -passthru -ErrorAction Stop
+                }Else{
+                    StatusMsg "Attempting to copy new working file from master source..." "Magenta"
+                    Copy-Item -Path $ExcelSourceFile -Destination $ExcelWorkingCopy -force -ErrorAction Stop
+                }
+            }Catch{
+                $Failure = $True
+            }
+            If (Test-Path -Path $ExcelSourceFile -PathType Leaf){ 
+                StatusMsg "Verified new working copy of spreadsheet has been copied..." "Green"
+                $Failure = $False
+            }Else{
+                $Failure = $True
+                StatusMsg "New spreadsheet working copy was not found..." "Red"
+            }
+        }Else{
+            $Failure = $True
+            StatusMsg "Master source file not found..." "Yellow"
+            StatusMsg "Unable to copy new local working copy from master..." "Red"       
+        }
+    }  
+    If ($Failure){
+        StatusMsg "Cannot continue.  Exiting..." "Red"
+        $SafeUpdate = $False
+        Break;Break;Break
+    }Else{
+        If ($SafeUpdate ){ 
+            StatusMsg "Safe-Update Enabled. Creating a backup copy of the working spreadsheet..." "Green"
+            $Backup = $DateTime+"_"+$ExcelWorkingCopy.split("\")[3]+".bak"
+            Try{
+                Copy-Item -Path $ExcelWorkingCopy -Destination "$PSScriptRoot\$backup"
+            }Catch{
+                StatusMsg "Failed to create a backup copy of the working spreadsheet..." "Red"
+            }
+            StatusMsg "Retaining last 5 spreadsheet backup copies, removing the rest..." "Magenta"
+            Get-ChildItem -Path $PSScriptRoot | Where-Object {(-not $_.PsIsContainer) -and ($_.Name -like "*.bak")} | Sort-Object -Descending -Property LastTimeWrite | Select-Object -Skip 5 | Remove-Item
+        }
+        StatusMsg "Opening spreadsheet working copy..." "Magenta" $Debug
+        $WorkSheet = Open-Excel $Excel $ExcelWorkingCopy $SheetName $Console   #--[ Open the existing spreadsheet if detected. ]--  
+        $Script:NewSpreadsheet = $False
     }
-    $Row = 4   
+
+    #--[ Generate IP list object from spreadsheet prior to processing ]--
+    $Row = 4   #--[ On my spreadsheets row 4 is where data begins.  Row 1 is the color code ]--
     $IPList = @() 
     $PreviousIP = ""
-    StatusMsg "Reading Spreadsheet..." "Magenta"
+    StatusMsg "Reading Spreadsheet..." "Magenta" $Debug
     Do {
         $CurrentIP = $WorkSheet.Cells.Item($Row,1).Text   
         If ($CurrentIP -ne $PreviousIP){  #--[ Make sure IPs are added only once per switch stack ]--
@@ -664,11 +711,11 @@ If (Test-Path -Path $ListFileName){  #--[ Verify that a text file exists and pul
     } Until (
         $WorkSheet.Cells.Item($row,1).Text -eq ""   #--[ Condition that stops the loop if it returns true ]--
     )
-    $Excel.DisplayAlerts = $false    
     #$Excel.quit()  #--[ Close it.  Only do so if you are pulling the IP list and doing nothing else, otherwise bad things happen  ]--
 }
 
 $Excel.Visible = $True
+$Excel.DisplayAlerts = $false    
 
 #==[ Begin Processing of IP List ]=============================================
 $Row = 4
@@ -678,17 +725,14 @@ $ErrorActionPreference = "stop"
 
 #--[ NOTE: If a line in the text file starts with "#," that line is ignored ]--
 ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#"}){
-    $Excel.ActiveSheet.UsedRange.Rows.Item($Row).Interior.ColorIndex = 20  #--[ Sets row color to pale blue to denote which is being worked on ]--
     $NoAccess = $False
     $IP = ($Line.Split(";")[0]) 
     $Facility = ($Line.Split(";")[1]) 
     $Address = ($Line.Split(";")[2]) 
     $IDF = ($Line.Split(";")[3]) 
     $Description = ($Line.Split(";")[4])
-    If ($SpreadSheet -ne "New"){
-        [Int]$Row = $Line.Split(";")[5]   #--[ Row is added when IP text file is parsed.  Will not be in read of existing XL ]--
-    }
-
+    #--[ The next line sets row color to pale blue to denote which row is being worked on ]--
+    $Excel.ActiveSheet.UsedRange.Rows.Item($Row-1).Interior.ColorIndex = 20  
     $MfgDate = ""
     $HostName = ""
     $Result = ""
@@ -705,11 +749,9 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
         Write-Host " ]---------------------------------------------------" -ForegroundColor yellow 
     }
     
-    If ($Script:Debug -and $EnableExcel){
-        StatusMsg "Current Line = $Line" "Magenta"
-        StatusMsg "Spreadsheet row = $Row" "Magenta"
-    }
-
+    StatusMsg "Current Line = $Line" "Magenta" $Debug
+    StatusMsg "Spreadsheet row = $Row" "Magenta" $Debug
+ 
     #--[ Test and connect to target IP ]----------------------------------------------------------
     If ($IP -eq 1.1.1.1){  #}"10.0.40.1")){ #} -or ($IP -eq "10.0.40.6")){ # -or ($IP -eq "10.0.40.2")){    #--[ IP Exclusion List ]--        
         If ($Console){Write-Host "-- Script Status: Bypassing IP" -ForegroundColor Red}
@@ -747,7 +789,7 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                 $Result = $TestFile
             }Else{
                 If (Test-Path -Path 'C:\Program Files\PuTTY\'){ 
-                    Switch (DeviceType){
+                    Switch ($DeviceType){
                         "WAP" {
                             $Obj | Add-Member -MemberType NoteProperty -Name "DeviceType" -Value "Wireless AP" -force
                             #--[ 1st Command ]--
@@ -1504,12 +1546,21 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                             }
                         }  
                     }  
+
                     $Index = $WorkSheet.Cells($Row,1).Interior.ColorIndex  #--[ Determine existing cell color index ]--
-                    If ($Index -ne $Color){
-                        $WorkSheet.UsedRange.Rows.Item($Row).Interior.ColorIndex = $Color
+                    If ($Index -ne $Color){   
+                    #    If ($Script:NewSpreadsheet){                  
+                            $WorkSheet.UsedRange.Rows.Item($Row-1).Interior.ColorIndex = $Color
+                     #   }Else{
+                      #      $WorkSheet.UsedRange.Rows.Item($Row).Interior.ColorIndex = $Color
+                       # }
                     }
                     If ($Color -eq 3){
-                        $WorkSheet.UsedRange.Rows.Item($Row).Font.ColorIndex = 6  #--[ Yellow text if background is red ]--
+                    #    If ($Script:NewSpreadsheet){
+                            $WorkSheet.UsedRange.Rows.Item($Row).Font.ColorIndex = 6  #--[ Yellow text if background is red ]--
+                     #   }Else{
+                      #      $WorkSheet.UsedRange.Rows.Item($Row).Font.ColorIndex = 6  #--[ Yellow text if background is red ]--
+                       # }
                     }
                 }  
 
@@ -1581,7 +1632,7 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                 $Row++
             }
         }Else{
-            If ($Console){Write-Host "--- No Connection ---" -ForegroundColor Red}
+            StatusMsg "--- No Connection ---" "Red" $Debug
             If ($EnableExcel){
                 $WorkSheet.Cells.Item($Row, 1) = $IP 
                 $WorkSheet.Cells.Item($Row, 3) = "No Connection" 
@@ -1589,9 +1640,7 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                 $Row++
             }
         }
-    
-        Write-Host
-        StatusMsg "Clearing run variables." "magenta"
+        StatusMsg "Clearing run variables." "magenta" $Debug
         Remove-Variable Obj -ErrorAction "silentlycontinue"
         Remove-Variable Obj01 -ErrorAction "silentlycontinue"
         Remove-Variable Obj02 -ErrorAction "silentlycontinue"
@@ -1600,12 +1649,36 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
         Remove-Variable Obj05 -ErrorAction "silentlycontinue"
         Remove-Variable Obj06 -ErrorAction "silentlycontinue"
         Remove-Variable Obj07 -ErrorAction "silentlycontinue"
-        Remove-Variable Obj08 -ErrorAction "silentlycontinue"
+        Remove-Variable Obj08 -ErrorAction "silentlycontinue"        
     }
-    StatusMsg "End of Item $IP" "magenta"
+    StatusMsg "End of Item $IP" "magenta" $Debug
 }
 
-Write-Host "--- COMPLETED ---" -ForegroundColor red
+#--[ Cleanup ]--
+$Excel.DisplayAlerts = $False
+Write-host ""
+Try{ 
+    If ($Script:NewSpreadsheet -And (Test-Path -Path $ExcelWorkingCopy)){
+        StatusMsg '!!! Existing working spreadsheet is NOT being overwritten !!!' "Yellow" $Debug
+        StatusMsg 'Saving as "NewSpreadsheet.xlsx" ...' "Green" $Debug
+        $Excel.ActiveWorkbook.SaveAs($PSScriptRoot+"\NewSpreadsheet.xlsx")
+    }ElseIf(!(Test-Path -Path $ExcelWorkingCopy)){
+        StatusMsg "Saving as a new working spreadsheet... " "Green" $Debug
+        $Excel.ActiveWorkbook.SaveAs($ExcelWorkingCopy)
+    }Else{  
+        StatusMsg "Saving working spreadsheet... " "Green" $Debug       
+        $Excel.ActiveWorkbook.Save() 
+    }
+    $Excel.quit()                                               #--[ Quit Excel ]--
+    [Runtime.Interopservices.Marshal]::ReleaseComObject($Excel) #--[ Release the COM object ]--
+}Catch{
+    StatusMsg "Save Failed..." "Red" $Debug
+    Write-Host "`n`n  NOTICE !!! ---  Spreadsheet has NOT been saved.  Please manually save at this time ---`n`n" -ForegroundColor Yellow
+    Write-Host $_.Exception.Message -ForegroundColor Red
+}
+
+Write-Host "`n--- COMPLETED ---" -ForegroundColor red
+ 
 
 <#--[ External XML config file example ]-----------------------------------
 # --[ To be named the same as the script and located in the same folder as the script ]--
