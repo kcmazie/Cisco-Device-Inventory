@@ -1,7 +1,7 @@
 Param(
-	[switch]$Console = $false,         #--[ Set to true to enable local console result display. Defaults to false ]--
-	[switch]$Debug = $False,           #--[ Generates extra console output for debugging.  Defaults to false ]--
-	[switch]$EnableExcel = $True,      #--[ Defaults to use Excel. ]--   
+    [switch]$Console = $false,         #--[ Set to true to enable local console result display. Defaults to false ]--
+    [switch]$Debug = $False,           #--[ Generates extra console output for debugging.  Defaults to false ]--
+    [switch]$EnableExcel = $True,      #--[ Defaults to use Excel. ]--   
     [switch]$SafeUpdate = $False,      #--[ Forces a copy made with a date/Time stamp prior to editing the spreadsheet as a safety backup. ]--  
     [Switch]$StayCurrent = $False,     #--[ Will copy a new version of the spreadsheet from source if the date stamps don't match ]--
     $DeviceType = "Switch"             #--[ Default to running against switches ]--
@@ -36,13 +36,13 @@ Tracks switch port status over time using MS Excel.  Full instructions are withi
                    : so that nothing sensitive is conbtained within the script.  Initial creation of the spreadsheet 
                    : can be done with a formatted flat text file.  If the text file exists it will always be used
                    : 
-		           :
+                   :
       Requirements : Plink.exe must be available in your path or the full path must be included in the 
                    : commandline(s) below.  2 versions are used in case of version issues.  These are located
                    : in the same folder and renamed according to version (see around line 256 below). Excel must be 
                    : available on the local PC.  SSH Keys must already be stored on the local PC through the
                    : use of PuTTY or connection will fail.  An option exists to add it below.
-	               : 
+                   : 
    Option Switches : See descriptions above.
                    :
           Warnings : Excel is set to be visible (can be changed) so don't mess with it while the script is 
@@ -58,7 +58,7 @@ Tracks switch port status over time using MS Excel.  Full instructions are withi
     Last Update by : Kenneth C. Mazie                                           
    Version History : v1.00 - 06-01-23 - Original release
     Change History : v1.10 - 00-00-00 - 
-				   :                  
+                   :                  
 ==============================================================================#>
 Clear-Host
 #Requires -version 5
@@ -113,8 +113,8 @@ Function LoadConfig ($Config){
     $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "AltPass" -Value $Config.Settings.Credentials.AltPass
     }Else{
         StatusMsg "MISSING XML CONFIG FILE.  File is required.  Script aborted..." " Red" $True
-<#--[ External XML config file example ]-----------------------------------
-# --[ To be named the same as the script and located in the same folder as the script ]--
+        $Message = ('--[ External XML config file example ]-----------------------------------
+--[ To be named the same as the script and located in the same folder as the script ]--
 
 <?xml version="1.0" encoding="utf-8"?>
 <Settings>
@@ -122,27 +122,26 @@ Function LoadConfig ($Config){
         <SmtpServer>mailserver.company.org</SmtpServer>
         <SmtpPort>25</SmtpPort>
         <RecipientEmail>InformationTechnology@company.org</RecipientEmail>
-		<SourcePath>C:\folder</SourcePath>
-		<ExcelSourceFile>+NetworkedDevice-Master-Inventory.xlsx</ExcelSourceFile>
-		<ExcelWorkingCopy>NetworkedDevice-Master-Inventory.xlsx</ExcelWorkingCopy>
-		<Domain>company.org</Domain>
+        <SourcePath>C:\folder</SourcePath>
+        <ExcelSourceFile>+NetworkedDevice-Master-Inventory.xlsx</ExcelSourceFile>
+        <ExcelWorkingCopy>NetworkedDevice-Master-Inventory.xlsx</ExcelWorkingCopy>
+        <Domain>company.org</Domain>
     </General>
     <Credentials>
-		<PasswordFile>c:\AESPass.txt</PasswordFile>
-		<KeyFile>c:\AESKey.txt</KeyFile>
-		<WAPUser>admin</WAPUser>
-		<WAPPass>wappass</WAPPass>
+        <PasswordFile>c:\AESPass.txt</PasswordFile>
+        <KeyFile>c:\AESKey.txt</KeyFile>
+        <WAPUser>admin</WAPUser>
+        <WAPPass>wappass</WAPPass>
         <AltUser>user1</AltUser>
-		<AltPass>userpass1</AltPass>
-	</Credentials>	
-	<Recipients>
-    	<Recipient>me@comapny.org</Recipient>
-       	<Recipient>you@comapny.org</Recipient>
-       	<Recipient>them@comapny.org</Recipient>
+        <AltPass>userpass1</AltPass>
+    </Credentials>    
+    <Recipients>
+        <Recipient>me@comapny.org</Recipient>
+        <Recipient>you@comapny.org</Recipient>
+        <Recipient>them@comapny.org</Recipient>
     </Recipients>
-</Settings> 
-
-#>
+</Settings> ')
+Write-host $Message -ForegroundColor Yellow
     }
     Return $XmlOption
 }
@@ -352,8 +351,8 @@ Function GetEOLDate ($ModelNum){    #--[ Formatted as EOL,EOS,LDOS.  Note that F
         "WS-C3750-V2-48PS" {Return "11/14/2013,5/14/2016,5/31/2021";Break}          # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3750-series-switches/eol_c51-696372.html
         "WS-C3750-48PS-S" {Return "1/4/2010,7/5/2010,7/31/2015";Break}
         "WS-C3750V2-48PS-S" {Return "11/14/1013,5/14/2016,5/31/2021";Break}         # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3750-series-switches/eos-eol-notice-c51-730227.html
-        "WS-C3750X-24P-S" {Return "11/14/1013,5/14/2016	5/31/2021";Break}
-        "WS-C3850-12XS" {Return	"10/31/2019,10/31/2020,10/31/2025";Break}           # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3850-series-switches/eos-eol-notice-c51-743072.html
+        "WS-C3750X-24P-S" {Return "11/14/1013,5/14/2016,5/31/2021";Break}
+        "WS-C3850-12XS" {Return "10/31/2019,10/31/2020,10/31/2025";Break}           # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3850-series-switches/eos-eol-notice-c51-743072.html
         "WS-C3850-24P" {Return "10/31/2019,10/31/2020,10/31/2025";Break}
         "WS-C3850-48P" {Return "10/31/2019,10/31/2020,10/31/2025";Break}
         "WS-C6509-V-E" {Return "10/31/2019,10/30/2020,10/31/2025";Break}
@@ -1679,35 +1678,3 @@ Try{
 
 Write-Host "`n--- COMPLETED ---" -ForegroundColor red
  
-
-<#--[ External XML config file example ]-----------------------------------
-# --[ To be named the same as the script and located in the same folder as the script ]--
-
-<?xml version="1.0" encoding="utf-8"?>
-<Settings>
-    <General>
-        <SmtpServer>mailserver.company.org</SmtpServer>
-        <SmtpPort>25</SmtpPort>
-        <RecipientEmail>InformationTechnology@company.org</RecipientEmail>
-		<SourcePath>C:\folder</SourcePath>
-		<ExcelSourceFile>+NetworkedDevice-Master-Inventory.xlsx</ExcelSourceFile>
-		<ExcelWorkingCopy>NetworkedDevice-Master-Inventory.xlsx</ExcelWorkingCopy>
-		<Domain>company.org</Domain>
-    </General>
-    <Credentials>
-		<PasswordFile>c:\AESPass.txt</PasswordFile>
-		<KeyFile>c:\AESKey.txt</KeyFile>
-		<WAPUser>admin</WAPUser>
-		<WAPPass>wappass</WAPPass>
-        <AltUser>user1</AltUser>
-		<AltPass>userpass1</AltPass>
-	</Credentials>	
-	<Recipients>
-    	<Recipient>me@comapny.org</Recipient>
-       	<Recipient>you@comapny.org</Recipient>
-       	<Recipient>them@comapny.org</Recipient>
-    </Recipients>
-</Settings> 
-
-#>
-   
