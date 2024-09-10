@@ -9,7 +9,7 @@
 [powershell-minimum]: https://img.shields.io/badge/PowerShell-5.1+-blue.svg 
 [powershell-github]:  https://github.com/PowerShell/PowerShell
 
-# $${\color{Cyan}Powershell \space "Cisco-Device-Inventory" \space Script}$$
+# $${\color{Cyan}Powershell \space "Cisco-Device-Inventory.ps1"}$$
 
 #### $${\color{orange}Original \space Author \space : \space \color{white}Kenneth \space C. \space Mazie \space \color{lightblue}(kcmjr \space AT \space kcmjr.com)}$$
 
@@ -45,12 +45,13 @@ Command line options for testing:
 ## $${\color{grey}Configuration:}$$ 
 The script takes virtually all configuration from the companion XML file.  As previously noted the file must exist and if not found the script will abort.  A message will pop-up showing the basic settings should the file not be found.
 
-The XML file broken down into multiple sections each of which falls under the section heading of "<Settings>".
+The XML file broken down into multiple sections each of which falls under the section heading of "Settings".
 
-#### $${\color{darkcyan}"General"  Section:}$$
-   This section sets the run parameters such as username and password (or encrypted files to use), folder locations, email recipients, etc.
-   If pre-stored credentials are desired use this: https://github.com/kcmazie/CredentialsWithKey
-   ```xml
+* $${\color{darkcyan}"General"  Section:}$$ This section sets the run parameters such as username and password (or encrypted files to use), folder locations, email recipients, etc.
+* $${\color{darkcyan}"Credentials"  Section:}$$ This section stores hard coded credentials or can be ignored by enabling a credential prompt.  If encrypted, pre-stored credentials are desired, use this: https://github.com/kcmazie/CredentialsWithKey
+* $${\color{darkcyan}"Recipients"  Section:}$$ This section stores email addresses of potential status email recipients.
+ 
+```xml
 <?xml version="1.0" encoding="utf-8"?>
 <Settings>
     <General>
@@ -76,7 +77,7 @@ The XML file broken down into multiple sections each of which falls under the se
         <Recipient>them@comapny.org</Recipient>
     </Recipients>
 </Settings>
-   ```
+```
    
 ### $${\color{grey}Screenshots:}$$ 
 * Coming soon.
@@ -84,7 +85,7 @@ The XML file broken down into multiple sections each of which falls under the se
 <!-- ![Initial GUI](https://github.com/kcmazie/Site-Check/blob/main/Screenshot1.jpg "Initial GUI") -->
   
 ### $${\color{grey}Warnings:}$$ 
-* Excel is set to be visible (can be changed) so don't mess with it while the script is running or it can crash.  Don't click in spreadsheet while running or the script will crash. 
+* Excel is set to be visible (can be changed) so don't mess with the spreadsheet while the script is running or the script will crash. 
 
 ### $${\color{grey}Enhancements:}$$ 
 Some possible future enhancements are:
