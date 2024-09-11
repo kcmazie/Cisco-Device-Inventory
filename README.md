@@ -1,5 +1,7 @@
 <!---
+<head>
 <meta name="google-site-verification" content="SiI2B_QvkFxrKW8YNvNf7w7gTIhzZsP9-yemxArYWwI" />
+</head>
 -->
 [![Minimum Supported PowerShell Version][powershell-minimum]][powershell-github]&nbsp;&nbsp;
 [![GPLv3 license](https://img.shields.io/badge/License-GPLv3-blue.svg)](http://perso.crans.org/besson/LICENSE.html)&nbsp;&nbsp;
