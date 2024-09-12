@@ -10,7 +10,7 @@
 
 [powershell-minimum]: https://img.shields.io/badge/PowerShell-5.1+-blue.svg 
 [powershell-github]:  https://github.com/PowerShell/PowerShell
-
+<span style="background-color:black">
 # $${\color{Cyan}Powershell \space "Cisco-Device-Inventory.ps1"}$$
 
 #### $${\color{orange}Original \space Author \space : \space \color{white}Kenneth \space C. \space Mazie \space \color{lightblue}(kcmjr \space AT \space kcmjr.com)}$$
@@ -107,4 +107,4 @@ Code snippets and/or ideas came from many sources including but not limited to t
 * Last Update by  : Kenneth C. Mazie 
   * Initial Release : v1.00 - 06-01-23 - Original release
   * Change History  : v1.10 - 00-00-00 - 
- 
+ </span>
