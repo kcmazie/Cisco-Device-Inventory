@@ -105,10 +105,10 @@ Code snippets and/or ideas came from many sources including but not limited to t
   
 ### $${\color{grey}Version \\& Change History:}$$ 
 * Last Update by  : Kenneth C. Mazie 
-  * Initial Release : v1.00 - 06-01-23 - Original release
-  * Change History  : v1.90 - 00-00-00 - Numerous edits
-                    : v2.10 - 00-00-00 - Numerous edits
-                    : v3.00 - 10-16-24 - Added code for C9200 switch.  Added alternate SSH routine using Posh-SSH (still 
-                    :                    need to integrate).  Corrected error writing some data to Excel. Corrected 
-                    :                    numerous parsing errors.  Removed PS Gallery tags.
+  * Initial Release :
+    * v1.00 - 06-01-23 - Original release
+  * Change History :
+    * v1.90 - 00-00-00 - Numerous edits
+    * v2.10 - 00-00-00 - Numerous edits
+    * v3.00 - 10-16-24 - Added code for C9200 switch.  Added alternate SSH routine using Posh-SSH (still need to integrate).  Corrected error writing some data to Excel. Corrected numerous parsing errors.  Removed PS Gallery tags.
  </span>
