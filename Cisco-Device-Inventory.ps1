@@ -7,12 +7,7 @@ Param(
     $DeviceType = "Switch"             #--[ Default to running against switches ]--
     )
 
-<#PSScriptInfo
-.VERSION 1.10
-.AUTHOR Kenneth C. Mazie (kcmjr AT kcmjr.com)
-.DESCRIPTION 
-Tracks switch port status over time using MS Excel.  Full instructions are within the script.
-#>
+
 <#==============================================================================
          File Name : Cisco-Device-Inventory.ps1
    Original Author : Kenneth C. Mazie (kcmjr AT kcmjr.com)
@@ -57,7 +52,11 @@ Tracks switch port status over time using MS Excel.  Full instructions are withi
                    : 
     Last Update by : Kenneth C. Mazie                                           
    Version History : v1.00 - 06-01-23 - Original release
-    Change History : v1.10 - 00-00-00 - 
+    Change History : v1.90 - 00-00-00 - Numerous edits
+                   : v2.10 - 00-00-00 - Numerous edits
+                   : v3.00 - 10-16-24 - Added code for C9200 switch.  Added alternate SSH routine using Posh-SSH (still 
+                   :                    need to integrate).  Corrected error writing some data to Excel. Corrected 
+                   :                    numerous parsing errors.  Removed PS Gallery tags.
                    :                  
 ==============================================================================#>
 Clear-Host
@@ -76,9 +75,20 @@ $Console = $true
 $EnableExcel = $true
 $EnableSQLite = $false     #--[ No SQLlite yet ]--
 $Script:Debug = $True
-$SafeUpdate = $True
-$StayCurrent = $False
+$SafeUpdate = $false
+$StayCurrent = $false 
+$CleanSheet = $True
 #==============================================================================
+
+if (!(Get-Module -Name posh-ssh*)) {    
+    Try{  
+        import-module -name posh-ssh
+    }Catch{
+        Write-host "-- Error loading Posh-SSH module." -ForegroundColor Red
+        Write-host "Error: " $_.Error.Message  -ForegroundColor Red
+        Write-host "Exception: " $_.Exception.Message  -ForegroundColor Red
+    }
+}
 
 If($Script:Debug){
     $Console = $true
@@ -100,20 +110,21 @@ Function LoadDebug ($Config){
 
 Function LoadConfig ($Config){
     If ($Config -ne "failed"){
-    $XmlOption = New-Object -TypeName psobject 
-    $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "Domain" -Value $Config.Settings.General.Domain
-    $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "SourcePath" -Value $Config.Settings.General.SourcePath 
-    $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "ExcelSourceFile" -Value $Config.Settings.General.ExcelSourceFile 
-    $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "ExcelWorkingCopy" -Value $Config.Settings.General.ExcelWorkingCopy
-    $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "PasswordFile" -Value $Config.Settings.Credentials.PasswordFile
-    $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "KeyFile" -Value $Config.Settings.Credentials.KeyFile
-    $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "WAPUser" -Value $Config.Settings.Credentials.WAPUser
-    $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "WAPPass" -Value $Config.Settings.Credentials.WAPPass
-    $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "AltUser" -Value $Config.Settings.Credentials.AltUser
-    $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "AltPass" -Value $Config.Settings.Credentials.AltPass
+        $XmlOption = New-Object -TypeName psobject 
+        $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "Domain" -Value $Config.Settings.General.Domain
+        $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "SourcePath" -Value $Config.Settings.General.SourcePath 
+        $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "ExcelSourceFile" -Value $Config.Settings.General.ExcelSourceFile 
+        $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "ExcelWorkingCopy" -Value $Config.Settings.General.ExcelWorkingCopy
+        $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "PasswordFile" -Value $Config.Settings.Credentials.PasswordFile
+        $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "KeyFile" -Value $Config.Settings.Credentials.KeyFile
+        $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "WAPUser" -Value $Config.Settings.Credentials.WAPUser
+        $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "WAPPass" -Value $Config.Settings.Credentials.WAPPass
+        $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "AltUser" -Value $Config.Settings.Credentials.AltUser
+        $XmlOption | Add-Member -Force -MemberType NoteProperty -Name "AltPass" -Value $Config.Settings.Credentials.AltPass
     }Else{
         StatusMsg "MISSING XML CONFIG FILE.  File is required.  Script aborted..." " Red" $True
-        $Message = ('--[ External XML config file example ]-----------------------------------
+        $Message = (
+'--[ External XML config file example ]-----------------------------------
 --[ To be named the same as the script and located in the same folder as the script ]--
 
 <?xml version="1.0" encoding="utf-8"?>
@@ -136,9 +147,9 @@ Function LoadConfig ($Config){
         <AltPass>userpass1</AltPass>
     </Credentials>    
     <Recipients>
-        <Recipient>me@comapny.org</Recipient>
-        <Recipient>you@comapny.org</Recipient>
-        <Recipient>them@comapny.org</Recipient>
+        <Recipient>me@company.org</Recipient>
+        <Recipient>you@company.org</Recipient>
+        <Recipient>them@company.org</Recipient>
     </Recipients>
 </Settings> ')
 Write-host $Message -ForegroundColor Yellow
@@ -147,9 +158,13 @@ Write-host $Message -ForegroundColor Yellow
 }
 
 Function Write2Excel ($WorkSheet,$Row,$Col,$NewData,$Format,$Debug){
-    $Header = $WorkSheet.Cells.Item(3,$Col).Text  
-   # $WorkSheet.UsedRange.Rows.Item($Row).Interior.ColorIndex = 20  #--[ Sets row color to pale blue to denote which is being worked on ]--
-    
+    $Header = $WorkSheet.Cells.Item($Row,$Col).Text  
+     
+    If (($NewData -eq "") -or ($Null -eq $NewData)){
+        If ($Debug){write-host "-- No Data, No Write -- (Col"$Col")" -ForegroundColor Yellow} 
+        Return
+    }
+
     If ($WorkSheet.Cells.Item($Row,3).Text -like "*ISSUES (Ping OK)*"){
         $WorkSheet.UsedRange.Rows.Item($Row).Interior.ColorIndex = 15  #--[ Background set to grey if ping OK but logon fails ]--
     }
@@ -161,7 +176,7 @@ Function Write2Excel ($WorkSheet,$Row,$Col,$NewData,$Format,$Debug){
         write-host "- Col Header      :"$Header                                     #--[ To validate that data is going to the right column ]--
         write-host "- New Data        :"$NewData -ForegroundColor Green
     }
-    
+
     If ($Script:NewSpreadsheet){                                                    #--[ Creating a new spreadsheet, set all cells to black ]--
         $Worksheet.Cells($Row, $Col).Font.Bold = $False
         $Worksheet.Cells($Row, $Col).Font.ColorIndex = 0                            #--[ Black ]--    
@@ -246,7 +261,29 @@ Function Write2Excel ($WorkSheet,$Row,$Col,$NewData,$Format,$Debug){
 }
 
 Function StatusMsg ($Msg, $Color, $Debug){
+    $Debug = $true
     If ($Debug){Write-Host "-- Script Status: $Msg" -ForegroundColor $Color}
+}
+
+Function GetSSH ($TargetIP,$Command,$Credential){
+    Get-SSHSession | Select-Object SessionId | Remove-SSHSession | Out-Null  #--[ Remove any existing sessions ]--
+    New-SSHSession -ComputerName $TargetIP -AcceptKey -Credential $Credential | Out-Null
+    $Session = Get-SSHSession -Index 0 
+    $Stream = $Session.Session.CreateShellStream("dumb", 0, 0, 0, 0, 1000)
+    $Stream.Write("terminal Length 0 `n")
+    Start-Sleep -Milliseconds 60
+    $Stream.Read() | Out-Null
+    $Stream.Write("$Command`n")
+    sleep -millisec 100
+    $ResponseRaw = $Stream.Read()
+    $Response = $ResponseRaw -split "`r`n" | ForEach-Object{$_.trim()}
+    while (($Response[$Response.Count -1]) -notlike "*#") {
+        Start-Sleep -Milliseconds 60
+        $ResponseRaw = $Stream.Read()
+        $Response = $ResponseRaw -split "`r`n" | ForEach-Object{$_.trim()}
+    }
+    Get-SSHSession | Select-Object SessionId | Remove-SSHSession | Out-Null  #--[ Remove the open session ]--
+    Return $Response
 }
 
 Function CallPlink ($IP,$command,$Plver,$DeviceType){
@@ -255,6 +292,19 @@ Function CallPlink ($IP,$command,$Plver,$DeviceType){
     $UN = $Env:USERNAME
     $DN = $Env:USERDOMAIN
     $UID = $DN+"\"+$UN
+
+    If ($Env:Path -notlike "*putty*"){
+        StatusMsg "Putty was not found in your system path.  This script will probably fail." "Red" $Debug 
+        sleep -sec 10
+    }
+    If (!(Test-Path -Path "$PSScriptRoot\plink-v52.exe" -PathType leaf)){
+        StatusMsg "Plink v52 not found, copying to script folder..." "Magenta" $Debug
+        Copy-item -Path "c:\program files\putty\plink-v52.exe" -Destination $PSScriptRoot
+    }
+    If (!(Test-Path -Path "$PSScriptRoot\plink-v73.exe" -PathType leaf)){
+        StatusMsg "Plink v73 not found, copying to script folder..." "Magenta" $Debug
+        Copy-item -Path "c:\program files\putty\plink-v73.exe" -Destination $PSScriptRoot
+    }
     If ($DeviceType -eq "WAP"){
         $Username = $ExtOption.WAPUser 
         $Password = $ExtOption.WAPPass 
@@ -274,58 +324,75 @@ Function CallPlink ($IP,$command,$Plver,$DeviceType){
         $Username = $Domain+"\"+$Credential.GetNetworkCredential().UserName
     }
 
-    If (Test-Connection -ComputerName $IP -count 1 -BufferSize 16 -Quiet) {
-        #--[ Detect and store SSH key in local registry if needed ]--
-        # StatusMsg "Automatically storing SSH key if needed." "Magenta"
-        # Write-Output "Y" | 
-        # plink-v52.exe -ssh -pw $password $username@$IP #"exit" #*>&1
-        # plink-v73.exe -ssh -pw $password $username@$IP #-batch #"exit" #*>&1
-        # Start-Sleep -Milliseconds 500
-        #------------------------------------------------------------
-        StatusMsg "Plink IP: $IP" "Magenta" $Debug
-        #$test = @(plink-v73.exe -ssh -no-antispoof -pw $Password $username@$IP $command ) #*>&1)
-        $test = @(plink-v73.exe -ssh -no-antispoof -batch -pw $Password $username@$IP $command *>&1)
-        If ($test -like "*abandoned*"){
-            StatusMsg "Switching Plink version" "Magenta" $Debug
-            $SwitchPlink = $true
-        }Else{
-            StatusMsg 'Plink version test passed' 'Magenta' $Debug
-        }
-        If ($SwitchPlink){
-            $Msg = 'Executing Plink v52 (Command = '+$Command+')'
-            StatusMsg $Msg 'Magenta' $Debug
-            $Result = @(plink-v52.exe -ssh -no-antispoof -batch -pw $Password $username@$IP $command *>&1) 
-        }Else{
-            $Msg = 'Executing Plink v73 (Command = '+$Command+')'
-            StatusMsg $Msg 'Magenta' $Debug
-            $Result = @(plink-v73.exe -ssh -no-antispoof -batch -pw $Password $username@$IP $command *>&1) 
-#            $Result = @(plink-v73.exe -ssh -t -pw $Password $username@$IP $command *>&1) 
-            If ($Result -like "*denied*"){
-                Start-Sleep -MilliSeconds 500
-                StatusMsg "--- ACCESS DENIED ---" "Red" $Debug
-                StatusMsg "Attempting alternate credentials..." "cyan" $Debug
-                $AltUser = $ExtOption.AltUser
-                $Result = @(plink-v73.exe -ssh -no-antispoof -batch -pw $ExtOption.AltPass "$AltUser@$IP" $command *>&1) 
-                If ($Result -like "*connection*"){
-                    Start-Sleep -MilliSeconds 500
-                    StatusMsg "Re-Executing Plink v73 due to failed connection..." "Red" $Debug
-                    $Result = @(plink-v73.exe -ssh -no-antispoof -batch -pw $Password $username@$IP $command *>&1) 
-                }
-            }
-        }
-        If ($Result -like "*denied*"){
-            Start-Sleep -MilliSeconds 500
-            StatusMsg "--- ACCESS DENIED ---" "Red" $Debug
-            StatusMsg "--- ACCESS HAS FAILED ---" "Red" $Debug
-            $Result = "ACCESS-DENIED"
-        }Else{
-            StatusMsg "Data collected... Parsing..." "Magenta" $Debug
-        }
-        Return $Result
-    }Else{
-        StatusMsg "Pre-Plink PING check FAILED" "Red" $Debug
+    If ($PlinkVControl -contains $IP){  #--[ Check lookup table for older plink version requirement ]--
+        $SwitchPlink = $True
+        StatusMsg "Switching Plink version" "Magenta" $Debug
     }
+
+    #--[ Always store or Update SSH key in CurrentUser PuTTY registry key ]--
+    StatusMsg "Automatically storing or updating SSH key..." "Magenta"
+    If ($SwitchPlink){
+        write-output "y" | plink-v52.exe -ssh $username@$IP 'exit' *>&1 | Out-Null
+        Start-Sleep -Milliseconds 500
+        $test = @(plink-v52.exe -ssh -no-antispoof -batch -pw $Password $username@$IP $command *>&1)   
+    }Else{
+        write-output "y" | plink-v73.exe -ssh $username@$IP 'exit' *>&1 | Out-Null
+        Start-Sleep -Milliseconds 500
+        $test = @(plink-v73.exe -ssh -no-antispoof -pw $Password $username@$IP $command *>&1)
+    }
+    #------------------------------------------------------------
+
+    If ($test -like "*The server's host key is not cached in the registry*"){
+        StatusMsg "Target SSH key not currently in system registry. --- This host will fail ---" "red"
+    }
+    If ($test -like "*Keyboard-interactive*"){
+        StatusMsg "Target SSH key has been stored." "Magenta" $Debug
+    }
+    If ($test -like "*abandoned*"){
+        StatusMsg "Switching Plink version" "Magenta" $Debug
+        $SwitchPlink = $true
+    }
+
+    StatusMsg "Plink IP: $IP" "Magenta" $Debug
+    If ($SwitchPlink){
+        $Msg = 'Executing Plink v52 (Command = '+$Command+')'
+        StatusMsg $Msg 'blue' $Debug
+        $Result = @(plink-v52.exe -ssh -no-antispoof -batch -pw $Password $username@$IP $command *>&1) 
+    }Else{
+        $ErrorActionPreference = "silentlycontinue"
+        $Msg = 'Executing Plink v73 (Command = '+$Command+')'
+        StatusMsg $Msg 'magenta' $Debug
+        $Result = @(plink-v73.exe -ssh -no-antispoof -batch -pw $Password $username@$IP $command *>&1)
+    }
+
+    ForEach ($Line in $Result){
+        If ($Line -like "*denied*"){
+            $Result = "ACCESS-DENIED"
+            Break
+        } 
+    }
+    StatusMsg "Data collected..." "Magenta" $Debug
+    Return $Result
+    Start-Sleep -millisec 500
 } 
+
+Function GetSource ($SourcePath,$ExcelSourceFile,$ExcelWorkingCopy){
+    StatusMsg "Excel working copy was not found, copying from source..." "Magenta"
+    If (Test-Path -Path $ExcelSourceFile -PathType Leaf){
+        Try{
+            Copy-Item -Path $ExcelSourceFile -Destination $ExcelWorkingCopy -force -ErrorAction:Stop
+            Return $True
+        }Catch{
+            write-host $_.Exception.Message
+            write-host $_.Error.Message
+            Return $False   
+            StatusMsg "Copy failed... " "red" 
+        }
+    }Else{   
+        StatusMsg "Source file check failed... " "red"
+        Return $False
+    }
+}
 
 Function GetEOLDate ($ModelNum){    #--[ Formatted as EOL,EOS,LDOS.  Note that FULL model number is used in lookup ]--
     Switch ($ModelNum) {
@@ -335,18 +402,19 @@ Function GetEOLDate ($ModelNum){    #--[ Formatted as EOL,EOS,LDOS.  Note that F
         "C9300-48P" {Return "N/A,N/A,N/A";Break}                                    # https://www.cisco.com/c/en/us/support/switches/catalyst-9300-series-switches/series.html#~tab-documents
         "C9300-NW-A-24" {Return "N/A,N/A,N/A";Break}
         "C9300-NW-A-48" {Return "N/A,N/A,N/A";Break}
+        "C9200CX-12P-2X2G" {Return "N/A,N/A,N/A";Break}
         "C6807-XL" {Return "05/02/2013,04/30/2022,04/30/2027";Break}                # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-6800-series-switches/eos-eol-notice-c51-2438805.html
         "WS-C3560C-8PC-S" {Return "10/31/2015,10/30/2016,10/31/2021";Break}         # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3560-c-series-switches/eos-eol-notice-c51-736180.html
         "WS-C3560C-12PC-S" {Return "10/31/2015,10/30/2016,10/31/2021";Break}        # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3560-c-series-switches/eos-eol-notice-c51-736180.html
         "WS-C3560G-24PS-S" {Return "01/31/2012,01/30/2013,01/31/2018";Break}        # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3750-series-switches/eol_c51-696372.html
         "WS-C3560V2-24PS-S" {Return "11/14/2013,05/14/2016,05/31/2021";Break}       # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3750-series-switches/eos-eol-notice-c51-730227.html
         "WS-C3560-12PC-S" {Return "10/31/2015,10/30/2016,10/31/2021";Break}         # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3560-series-switches/eol_c51_519208.html
-        "WS-C3560-24PS-S" {Return "1/4/2010,7/5/2010,7/31/2015";Break}
-        "WS-C3560-48PS-A" {Return "1/4/2010,7/5/2010,7/31/2015";Break}
-        "WS-C3560-48PS-S" {Return "1/4/2010,7/5/2010,7/31/2015";Break}
-        "WS-C3560-8PC-S" {Return "10/31/2015,10/30/2016,10/31/2021";Break}
-        "WS-C3560CX-8PC-S" {Return "N/A,N/A,N/A";Break}    
-        "WS-C3560CX-12PC-S" {Return "N/A,N/A,N/A";Break}    
+        "WS-C3560-24PS-S" {Return "1/4/2010,7/5/2010,7/31/2015";Break}              # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3650-series-switches/eos-eol-notice-c51-744426.html
+        "WS-C3560-48PS-A" {Return "1/4/2010,7/5/2010,7/31/2015";Break}              # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3650-series-switches/eos-eol-notice-c51-744426.html
+        "WS-C3560-48PS-S" {Return "1/4/2010,7/5/2010,7/31/2015";Break}              # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3650-series-switches/eos-eol-notice-c51-744426.html
+        "WS-C3560-8PC-S" {Return "10/31/2015,10/30/2016,10/31/2021";Break}          # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3650-series-switches/eos-eol-notice-c51-744426.html
+        "WS-C3560CX-8PC-S" {Return "05/01/2023,04/30/2024,04/30/2029";Break}        # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3560-cx-series-switches/catalyst-3560-cx-serie-switche-eol.html
+        "WS-C3560CX-12PC-S" {Return "05/01/2023,04/30/2024,04/30/2029";Break}       # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3560-cx-series-switches/catalyst-3560-cx-serie-switche-eol.html 
         "WS-C3650-48PS" {Return "10/31/2020,10/31/2021,10/31/2026";Break}    
         "WS-C3750-V2-48PS" {Return "11/14/2013,5/14/2016,5/31/2021";Break}          # https://www.cisco.com/c/en/us/products/collateral/switches/catalyst-3750-series-switches/eol_c51-696372.html
         "WS-C3750-48PS-S" {Return "1/4/2010,7/5/2010,7/31/2015";Break}
@@ -382,65 +450,66 @@ Function Open-Excel ($Excel,$ExcelWorkingCopy,$SheetName,$Console) {
         $Worksheet.Activate()
         $WorkSheet.Name = $SheetName
         [int]$Col = 1
-        $WorkSheet.cells.Item(3,$Col++) = "LAN IP Address"  # A
-        $WorkSheet.cells.Item(3,$Col++) = "Hostname"        # B
-        $WorkSheet.cells.Item(3,$Col++) = "Connection"      # C
-        $WorkSheet.cells.Item(3,$Col++) = "Base MAC"        # D
+        [Int]$Row = 1
+        $WorkSheet.cells.Item($Row,$Col++) = "LAN IP Address"  # A
+        $WorkSheet.cells.Item($Row,$Col++) = "Hostname"        # B
+        $WorkSheet.cells.Item($Row,$Col++) = "Connection"      # C
+        $WorkSheet.cells.Item($Row,$Col++) = "Base MAC"        # D
         #--------------------------------------------------------
-        $WorkSheet.cells.Item(3,$Col++) = "Facility"        # E
-        $WorkSheet.cells.Item(3,$Col++) = "Address"         # F
-        $WorkSheet.cells.Item(3,$Col++) = "IDF"             # G
-        $WorkSheet.cells.Item(3,$Col++) = "Description"     # H
-        $WorkSheet.cells.Item(3,$Col++) = "Asset Tag"       # I
+        $WorkSheet.cells.Item($Row,$Col++) = "Facility"        # E
+        $WorkSheet.cells.Item($Row,$Col++) = "Address"         # F
+        $WorkSheet.cells.Item($Row,$Col++) = "IDF"             # G
+        $WorkSheet.cells.Item($Row,$Col++) = "Description"     # H
+        $WorkSheet.cells.Item($Row,$Col++) = "Asset Tag"       # I
         #--------------------------------------------------------        
-        $WorkSheet.cells.Item(3,$Col++) = "Device Type"     # J
-        $WorkSheet.cells.Item(3,$Col++) = "Serial #"        # K
-        $WorkSheet.cells.Item(3,$Col++) = "Model #"         # L
-        $WorkSheet.cells.Item(3,$Col++) = "Mfg Date"        # M
-        $WorkSheet.cells.Item(3,$Col++) = "Age (Yrs)"       # N
-        $WorkSheet.cells.Item(3,$Col++) = "EOL Date"        # O
-        $WorkSheet.cells.Item(3,$Col++) = "EOS Date"        # P
-        $WorkSheet.cells.Item(3,$Col++) = "LDOS Date"       # Q
-        $WorkSheet.cells.Item(3,$Col++) = "Upgr Priority"   # R
-        $WorkSheet.cells.Item(3,$Col++) = "Processor"       # S
-        $WorkSheet.cells.Item(3,$Col++) = "RAM (MB)"        # T
-        $WorkSheet.cells.Item(3,$Col++) = "MB Serial #"     # U
-        $WorkSheet.cells.Item(3,$Col++) = "Firmware Ver"    # V
-        $WorkSheet.cells.Item(3,$Col++) = "Firmware Rel"    # W
-        $WorkSheet.cells.Item(3,$Col++) = "Firmware Family" # X
-        $WorkSheet.cells.Item(3,$Col++) = "Firmware Base"   # Y
-        $WorkSheet.cells.Item(3,$Col++) = "Last Reload"     # Z
-        $WorkSheet.cells.Item(3,$Col++) = "Days Up"         # AA
-        $WorkSheet.cells.Item(3,$Col++) = "Port Speed"      # AB
+        $WorkSheet.cells.Item($Row,$Col++) = "Device Type"     # J
+        $WorkSheet.cells.Item($Row,$Col++) = "Serial #"        # K
+        $WorkSheet.cells.Item($Row,$Col++) = "Model #"         # L
+        $WorkSheet.cells.Item($Row,$Col++) = "Mfg Date"        # M
+        $WorkSheet.cells.Item($Row,$Col++) = "Age (Yrs)"       # N
+        $WorkSheet.cells.Item($Row,$Col++) = "EOL Date"        # O
+        $WorkSheet.cells.Item($Row,$Col++) = "EOS Date"        # P
+        $WorkSheet.cells.Item($Row,$Col++) = "LDOS Date"       # Q
+        $WorkSheet.cells.Item($Row,$Col++) = "Upgr Priority"   # R
+        $WorkSheet.cells.Item($Row,$Col++) = "Processor"       # S
+        $WorkSheet.cells.Item($Row,$Col++) = "RAM (MB)"        # T
+        $WorkSheet.cells.Item($Row,$Col++) = "MB Serial #"     # U
+        $WorkSheet.cells.Item($Row,$Col++) = "Firmware Ver"    # V
+        $WorkSheet.cells.Item($Row,$Col++) = "Firmware Rel"    # W
+        $WorkSheet.cells.Item($Row,$Col++) = "Firmware Family" # X
+        $WorkSheet.cells.Item($Row,$Col++) = "Firmware Base"   # Y
+        $WorkSheet.cells.Item($Row,$Col++) = "Last Reload"     # Z
+        $WorkSheet.cells.Item($Row,$Col++) = "Days Up"         # AA
+        $WorkSheet.cells.Item($Row,$Col++) = "Port Speed"      # AB
         Switch ($DeviceType){
             "Router" {
-                $WorkSheet.cells.Item(3,$Col++) = "WAN CID"     # AC
-                $WorkSheet.cells.Item(3,$Col++) = "WAN IP"      # AD
-                $WorkSheet.cells.Item(3,$Col++) = "PRI/ATM/FXO/FXS/VPN/SER"   # AE
-                $WorkSheet.cells.Item(3,$Col++) = "Date Inspected"      # AF
+                $WorkSheet.cells.Item($Row,$Col++) = "WAN CID"     # AC
+                $WorkSheet.cells.Item($Row,$Col++) = "WAN IP"      # AD
+                $WorkSheet.cells.Item($Row,$Col++) = "PRI/ATM/FXO/FXS/VPN/SER"   # AE
+                $WorkSheet.cells.Item($Row,$Col++) = "Date Inspected"      # AF
                 $Worksheet.Name = "Routers"
-                $Range = $WorkSheet.Range(("A3"),("AF3")) 
+                $Range = $WorkSheet.Range(("A1"),("AF1")) 
             }
             "WAP" {
-                $WorkSheet.cells.Item(3,$Col++) = "Host Switch"      # AC
-                $WorkSheet.cells.Item(3,$Col++) = "Host Sw Port"     # AD
-                $WorkSheet.cells.Item(3,$Col++) = "Date Inspected"   # AE
+                $WorkSheet.cells.Item($Row,$Col++) = "Host Switch"      # AC
+                $WorkSheet.cells.Item($Row,$Col++) = "Host Sw Port"     # AD
+                $WorkSheet.cells.Item($Row,$Col++) = "Date Inspected"   # AE
                 $Worksheet.Name = "Wireless AP"
-                $Range = $WorkSheet.Range(("A3"),("AE3")) 
+                $Range = $WorkSheet.Range(("A1"),("AE1")) 
             }
             "Switch" {
-                $WorkSheet.cells.Item(3,$Col++) = "Port Count"       # AC
-                $WorkSheet.cells.Item(3,$Col++) = "Stack Sw #"       # AD   
-                $WorkSheet.cells.Item(3,$Col++) = "Date Inspected"   # AE          
+                $WorkSheet.cells.Item($Row,$Col++) = "Port Count"       # AC
+                $WorkSheet.cells.Item($Row,$Col++) = "Stack Sw #"       # AD   
+                $WorkSheet.cells.Item($Row,$Col++) = "Date Inspected"   # AE          
                 $Worksheet.Name = "Switches"
-                $Range = $WorkSheet.Range(("A3"),("AE3")) 
+                $Range = $WorkSheet.Range(("A1"),("AE1")) 
             }
             "VG" {
-                $WorkSheet.cells.Item(3,$Col++) = "Port Count"       # AC
-                $WorkSheet.cells.Item(3,$Col++) = "Stack Sw #"       # AD    
-                $WorkSheet.cells.Item(3,$Col++) = "Date Inspected"   # AE         
+                $WorkSheet.cells.Item($Row,$Col++) = "Port Count"       # AC
+                $WorkSheet.cells.Item($Row,$Col++) = "Stack Sw #"       # AD    
+                $WorkSheet.cells.Item($Row,$Col++) = "Date Inspected"   # AE         
                 $WorkSheet.Name = "Voice Gateways (VG)"
-                $Range = $WorkSheet.Range(("A3"),("AE3")) 
+                $Range = $WorkSheet.Range(("A1"),("AE1")) 
             }
         }
         $Range.font.bold = $True
@@ -449,7 +518,7 @@ Function Open-Excel ($Excel,$ExcelWorkingCopy,$SheetName,$Console) {
         $Range.Font.Size = 12
         $Range.Interior.ColorIndex = 56
         $Range.font.bold = $True
-        1..4 | ForEach {
+        1..4 | ForEach-Object {
             $Range.Borders.Item($_).LineStyle = 1
             $Range.Borders.Item($_).Weight = 4
         }
@@ -460,8 +529,11 @@ Function Open-Excel ($Excel,$ExcelWorkingCopy,$SheetName,$Console) {
 }
 
 #=[ End of Functions ]====================================================
-#=========================================================================
+
 #=[ Lookup Tables ]=======================================================
+$PlinkVControl = @()
+$PlinkVControl += "10.0.40.2"
+$PlinkVControl += "10.0.40.3"
 
 $MfgDateCodes = @{
     "01" = "1997"; 
@@ -491,7 +563,8 @@ $MfgDateCodes = @{
     "25" = "2021";
     "26" = "2022";
     "27" = "2023";
-    "28" = "2024"
+    "28" = "2024";
+    "29" = "2025"
 }
 
 $PortSpeed = @{
@@ -509,6 +582,7 @@ $PortSpeed = @{
     "WS-C3850-12XS" = "10/100/1000";
     "WS-C3850-48P" = "10/100/1000";
     "WS-C4510R+E" = "10/100/1000";
+    "C9200CX-12P-2X2G" = "10/100/1000";
     "C9300-48P" = "10/100/1000";
     "C9300-24P" = "10/100/1000";
     "AIR-CAP3702I-A-K9" = "10/100/1000";
@@ -519,7 +593,7 @@ $PortSpeed = @{
     "C9120AXI-B" = "10/100/1000"
 }
 #=[ End of Lookup Tables ]====================================================
-#=============================================================================
+
 #=[ Begin Processing ]========================================================
 
 #--[ Load external XML options file ]------------------------------------------------
@@ -589,18 +663,17 @@ Switch ($DeviceType){   #--[ Select which text file to use according to device t
 If ($EnableExcel){  
     $Excel = New-Object -ComObject Excel.Application                                #--[ Create new Excel COM object ]--
     StatusMsg "Preparing new Excel COM object..." "Magenta" $Debug
-    $Excel.Visible = $True
 }
 
 $IPList  = @()
 If (Test-Path -Path $ListFileName){  #--[ Verify that a text file exists and pull IP's from it then create a new spreadsheet. ]--
     $LoadList = Get-Content $ListFileName  
-    $Row = 4   
+    $Row = 2   
     StatusMsg "IP text list was found, loading IP list from it..." "green" $Debug
     If ($EnableExcel){  
         StatusMsg "Creating new Spreadsheet..." "green" $Debug
         $WorkSheet = Open-Excel $Excel "TempExcel" $SheetName $Console 
-        $Row = 4
+        $Row = 2
     }
     ForEach ($Item in $LoadList){              #--[ Clean up list prior to processing ]--
         #--[ Format is IP;facility;Address;IDF;description.  Semi-Colon delimited.  Lines starting with # are ignored. ]--
@@ -617,107 +690,93 @@ If (Test-Path -Path $ListFileName){  #--[ Verify that a text file exists and pul
     $Script:NewSpreadsheet = $True
     StatusMsg "Renaming IP text list file to .OLD..." "Magenta"
     Move-Item -Path $ListFileName -Destination ($ListFileName+".old") 
-
-
-}Else{  #--[ If no text file exists try to pull IPs from Excel ]--
-    StatusMsg "IP text list not found, attempting to process spreadsheet..." "cyan"
-    If (Test-Path -Path $ExcelWorkingCopy -PathType Leaf){                          #--[ Test for local spreadsheet ]--
-        StatusMsg "Spreadsheet working copy was found..." "Green"
+}Else{ #=======================================================================================================================
+    $ErrorActionPreference = "stop"
+    StatusMsg "IP text list not found, Attempting to process spreadsheet... " "cyan" $Console
+    $Script:NewSpreadsheet = $False
+    If (Test-Path -Path $ExcelWorkingCopy -PathType Leaf){
+        StatusMsg "Spreadsheet working copy located." "Green" $Console
         If ($StayCurrent){
+            StatusMsg "Renaming spreadsheet working copy to .BAK..." "Green" $Console
+            #--[ Make a backup of the working copy, keep only the last 10 ]--
+            $Backup = $PSScriptRoot+"\"+$DateTime+"_"+$ExtOption.ExcelWorkingCopy+".bak"
+            Get-ChildItem -Path $PSScriptRoot | Where-Object {(-not $_.PsIsContainer) -and ($_.Name -like "*.bak")} | Sort-Object -Descending -Property LastTimeWrite | Select-Object -Skip 10 | Remove-Item
+            Move-Item -Path $ExcelWorkingCopy -Destination $Backup 
             If (Test-Path -Path $ExcelSourceFile -PathType Leaf){                   #--[ Test for source file ]--
-                StatusMsg "Master source file is available..." "Green"
-                If (((Get-Item $ExcelSourceFile -ErrorAction silentlycontinue).LastWriteTime) -ne (Get-Item $ExcelWorkingCopy -ErrorAction silentlycontinue).LastWriteTime){
-                    StatusMsg "Excel working copy is out of date, copying from source..." "Magenta"
-                    Copy-Item -Path $ExcelSourceFile  -Destination $ExcelWorkingCopy -force -passthru
-                }Else{
-                    StatusMsg "Spreadsheet working copy is up to date..." "Green"
-                    StatusMsg "Loading existing working copy of spreadsheet from script folder..." "Magenta"
+                StatusMsg "Master source file is available..." "Green" $Console
+                Try{
+                    StatusMsg "Attempting to copy new working file from master source..." "Magenta" $Console 
+                    If ($Debug){                   
+                        Copy-Item -Path $ExcelSourceFile -Destination $ExcelWorkingCopy -force -passthru -ErrorAction Stop | Out-Null
+                    }Else{                 
+                        Copy-Item -Path $ExcelSourceFile -Destination $ExcelWorkingCopy -force -ErrorAction Stop | Out-Null
+                    }
+                    If (Test-Path -Path $ExcelWorkingCopy -PathType Leaf){ 
+                        StatusMsg "Verified new working copy of spreadsheet has been copied..." "Green" $Console
+                        $WorkBook = $Excel.Workbooks.Open($ExcelWorkingCopy)
+                    }
+                    StatusMsg "Cleaning working copy... Removing all non-target worksheets..." "Green"
+                    $Excel.displayalerts = $False
+                    ForEach ($WorkSheet in $WorkBook.Worksheets){
+                        If ($WorkSheet.Name -ne $SheetName){
+                            $WorkSheet.Delete()
+                        }
+                    }
+                }Catch{
+                    StatusMsg "Unable to copy new local working copy from master..." "Red" $Console   
+                    StatusMsg "Returning a copy of the recent backup... " "Green" $Console 
+                    Copy-Item -Path $Backup -destination $ExcelWorkingCopy 
                 }
-            }
-        }Else{
-            $Failure = $False
-        }
-    }Else{
-        StatusMsg "Spreadsheet working copy was not found..." "Yellow"
-        If (Test-Path -Path $ExcelSourceFile -PathType Leaf){                   #--[ Test for source file ]--
-            StatusMsg "Master source file is available..." "Green"
-            Try{
-                If ($Debug){ 
-                    StatusMsg "Attempting to copy new working file from master source (with debug info)..." "Magenta"
-                    Copy-Item -Path $ExcelSourceFile -Destination $ExcelWorkingCopy -force -passthru -ErrorAction Stop
+                If (Test-Path -Path $ExcelWorkingCopy -PathType Leaf){ 
+                    StatusMsg "Verified new working copy of spreadsheet has been copied..." "Green" $Console
+                    $WorkBook = $Excel.Workbooks.Open($ExcelWorkingCopy)
                 }Else{
-                    StatusMsg "Attempting to copy new working file from master source..." "Magenta"
-                    Copy-Item -Path $ExcelSourceFile -Destination $ExcelWorkingCopy -force -ErrorAction Stop
+                    StatusMsg "Working copy file was not found..." "Red" $Console
+                    StatusMsg "Nothing to process.  Exiting... " "red" $Console 
+                    Break;Break;Break
                 }
-            }Catch{
-                $Failure = $True
-            }
-            If (Test-Path -Path $ExcelSourceFile -PathType Leaf){ 
-                StatusMsg "Verified new working copy of spreadsheet has been copied..." "Green"
-                $Failure = $False
             }Else{
-                $Failure = $True
-                StatusMsg "New spreadsheet working copy was not found..." "Red"
+                StatusMsg "Master source file not found..." "Yellow" $Console
+                StatusMsg "Nothing to process.  Exiting... " "red" $Console 
+                Break;Break;Break
             }
         }Else{
-            $Failure = $True
-            StatusMsg "Master source file not found..." "Yellow"
-            StatusMsg "Unable to copy new local working copy from master..." "Red"       
-        }
-    }  
-    If ($Failure){
-        StatusMsg "Cannot continue.  Exiting..." "Red"
-        $SafeUpdate = $False
-        Break;Break;Break
-    }Else{
-        If ($SafeUpdate ){ 
-            StatusMsg "Safe-Update Enabled. Creating a backup copy of the working spreadsheet..." "Green"
-            $Backup = $DateTime+"_"+$ExcelWorkingCopy.split("\")[3]+".bak"
-            Try{
-                Copy-Item -Path $ExcelWorkingCopy -Destination "$PSScriptRoot\$backup"
-            }Catch{
-                StatusMsg "Failed to create a backup copy of the working spreadsheet..." "Red"
-            }
-            StatusMsg "Retaining last 5 spreadsheet backup copies, removing the rest..." "Magenta"
-            Get-ChildItem -Path $PSScriptRoot | Where-Object {(-not $_.PsIsContainer) -and ($_.Name -like "*.bak")} | Sort-Object -Descending -Property LastTimeWrite | Select-Object -Skip 5 | Remove-Item
-        }
-        StatusMsg "Opening spreadsheet working copy..." "Magenta" $Debug
-        $WorkSheet = Open-Excel $Excel $ExcelWorkingCopy $SheetName $Console   #--[ Open the existing spreadsheet if detected. ]--  
-        $Script:NewSpreadsheet = $False
+            StatusMsg "Using exisitng spreadsheet working copy." "Magenta" 
+            $WorkBook = $Excel.Workbooks.Open($ExcelWorkingCopy)
+        }    
     }
-
-    #--[ Generate IP list object from spreadsheet prior to processing ]--
-    $Row = 4   #--[ On my spreadsheets row 4 is where data begins.  Row 1 is the color code ]--
-    $IPList = @() 
-    $PreviousIP = ""
-    StatusMsg "Reading Spreadsheet..." "Magenta" $Debug
-    Do {
-        $CurrentIP = $WorkSheet.Cells.Item($Row,1).Text   
-        If ($CurrentIP -ne $PreviousIP){  #--[ Make sure IPs are added only once per switch stack ]--
-            #write-host "." -NoNewline
-            $Facility = $WorkSheet.Cells.Item($Row,5).Text
-            $Address = $WorkSheet.Cells.Item($Row,6).Text
-            $IDF = $WorkSheet.Cells.Item($Row,7).Text
-            $Description = $WorkSheet.Cells.Item($Row,8).Text
-            #write-host "current = "$CurrentIP"        previous = "$PreviousIP"    row = "$row  
-            $IPList += ,@($CurrentIP+";"+$Facility+";"+$Address+";"+$IDF+";"+$Description+";"+$Row)
-            $PreviousIP = $CurrentIP
-        }
-        $Selection = $WorkSheet.cells.Item($Row,1).EntireRow
-        $Selection.Font.Bold = $False
-        $Selection.Font.ColorIndex = 0
-        $Row++
-    } Until (
-        $WorkSheet.Cells.Item($row,1).Text -eq ""   #--[ Condition that stops the loop if it returns true ]--
-    )
-    #$Excel.quit()  #--[ Close it.  Only do so if you are pulling the IP list and doing nothing else, otherwise bad things happen  ]--
+    $WorkSheet = $Workbook.WorkSheets.Item($SheetName)
+    $WorkSheet.activate()  
+    $Excel.DisplayAlerts = $false  
+    $Excel.Visible = $True  
 }
 
-$Excel.Visible = $True
-$Excel.DisplayAlerts = $false    
+#--[ Generate IP list object from spreadsheet prior to processing ]--
+$Row = 2   #--[ Row 1 is the header ]--
+$IPList = @() 
+$PreviousIP = ""
+StatusMsg "Reading Spreadsheet..." "Magenta" $Debug
+Do {
+    $CurrentIP = $WorkSheet.Cells.Item($Row,1).Text   
+    If ($CurrentIP -ne $PreviousIP){  #--[ Make sure IPs are added only once per switch stack ]--
+        $Facility = $WorkSheet.Cells.Item($Row,5).Text
+        $Address = $WorkSheet.Cells.Item($Row,6).Text
+        $IDF = $WorkSheet.Cells.Item($Row,7).Text
+        $Description = $WorkSheet.Cells.Item($Row,8).Text
+        $IPList += ,@($CurrentIP+";"+$Facility+";"+$Address+";"+$IDF+";"+$Description+";"+$Row)
+        $PreviousIP = $CurrentIP
+    }
+    $Selection = $WorkSheet.cells.Item($Row,1).EntireRow
+    $Selection.Font.Bold = $False
+    $Selection.Font.ColorIndex = 0
+    $Row++
+} Until (
+    $WorkSheet.Cells.Item($Row,1).Text -eq ""   #--[ Condition that stops the loop if it returns true ]--
+)
+#$Excel.quit()  #--[ Close it.  Only do so if you are pulling the IP list and doing nothing else, otherwise bad things happen  ]--
 
 #==[ Begin Processing of IP List ]=============================================
-$Row = 4
+$Row = 2
 $command = 'sh version'
 [string]$Port = "23"
 $ErrorActionPreference = "stop"
@@ -730,8 +789,10 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
     $Address = ($Line.Split(";")[2]) 
     $IDF = ($Line.Split(";")[3]) 
     $Description = ($Line.Split(";")[4])
+
     #--[ The next line sets row color to pale blue to denote which row is being worked on ]--
-    $Excel.ActiveSheet.UsedRange.Rows.Item($Row-1).Interior.ColorIndex = 20  
+    $Excel.ActiveSheet.UsedRange.Rows.Item($Row).Interior.ColorIndex = 20  
+
     $MfgDate = ""
     $HostName = ""
     $Result = ""
@@ -752,7 +813,7 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
     StatusMsg "Spreadsheet row = $Row" "Magenta" $Debug
  
     #--[ Test and connect to target IP ]----------------------------------------------------------
-    If ($IP -eq 1.1.1.1){  #}"10.0.40.1")){ #} -or ($IP -eq "10.0.40.6")){ # -or ($IP -eq "10.0.40.2")){    #--[ IP Exclusion List ]--        
+    If ($IP -eq 1.1.1.1){  #}"10.10.10.1")){ #} -or ($IP -eq "10.10.40.6")){ # -or ($IP -eq "10.10.40.2")){    #--[ IP Exclusion List ]--        
         If ($Console){Write-Host "-- Script Status: Bypassing IP" -ForegroundColor Red}
     }Else{
         #--[ Test network connection.  Column 1 (A) ]----------------------------------------------
@@ -763,7 +824,7 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
             If (Test-Connection -ComputerName $IP -count 1 -BufferSize 16 -Quiet){
                 $Connection = $True
             }Else{
-                StatusMsg "--- No Connection ---" "Red"
+                StatusMsg "--- No Connection ---" "Red" $Debug
                 If ($EnableExcel){
                     $WorkSheet.Cells.Item($Row, 1) = $IP 
                     $WorkSheet.Cells.Item($Row, 3) = "No Connection"         
@@ -784,11 +845,9 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
             $MfgDate = ""
             $Age = ""
             $BaseMac = ""
-            If ($TestFile -ne "") {       
-                $Result = $TestFile
-            }Else{
-                If (Test-Path -Path 'C:\Program Files\PuTTY\'){ 
-                    Switch ($DeviceType){
+           
+            If (Test-Path -Path 'C:\Program Files\PuTTY\'){ 
+                Switch ($DeviceType){
                         "WAP" {
                             $Obj | Add-Member -MemberType NoteProperty -Name "DeviceType" -Value "Wireless AP" -force
                             #--[ 1st Command ]--
@@ -799,7 +858,6 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                             If ($Result -like "*can't get tty*"){
                                 $command = 'sh run'
                                 $Result2 = CallPlink $IP $command "" $DeviceType
-                                $result2
                                 Start-Sleep -Milliseconds 500
                             }
                             #--[ 3rd Command ]--
@@ -833,9 +891,9 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                                 ForEach ($Command in $Commands){
                                     $Writer.WriteLine($Command) 
                                     $Writer.Flush()
-                                    Start-Sleep -Milliseconds 1000 #$WaitTime
+                                    Start-Sleep -Milliseconds 1000 # $WaitTime
                                 }
-                                Start-Sleep -Milliseconds 4000 #($WaitTime * 4)
+                                Start-Sleep -Milliseconds 4000 # ($WaitTime * 4)
                                 While($Stream.DataAvailable){
                                     $Read = $Stream.Read($Buffer, 0, 2048) 
                                     $Data += ($Encoding.GetString($Buffer, 0, $Read))
@@ -845,7 +903,7 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                                 If ($Console){Write-Host "Unable to connect to host: $($RemoteHost):$Port"}
                             }
                         }
-                        Default {
+                        Default {                             
                             $ErrorActionPreference = "stop"
                             If ($DeviceType -eq "Router"){
                                 $Obj | Add-Member -MemberType NoteProperty -Name "DeviceType" -Value "Router" -force
@@ -895,11 +953,14 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                                 $BaseMac = $BaseMAC.Replace('.', '')
                                 $BaseMac = $BaseMAC -replace '..(?!$)', '$&:'
                                 $Obj | Add-Member -MemberType NoteProperty -Name "BaseMAC" -Value $BaseMAC -force
-                            }Else{
+                            }Else{ 
                                 $Obj | Add-Member -MemberType NoteProperty -Name "DeviceType" -Value "Switch" -force
                                 StatusMsg "Calling PLINK" "Magenta"
                                 $command = 'sh version'
                                 $Result = CallPlink $IP $command "" $DeviceType
+                                #--[ New Posh-SSH call for future use ]--
+                                #$Response = GetSSH $IP $Command $Credential
+                                #----------------------------------------
                             }
                         }
                     } 
@@ -907,14 +968,13 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                     Write-Host "Cannot find PLINK.EXE.   Aborting..." -ForegroundColor Red
                     break;break
                 }
-            }
+            #}
             #----------------------------------------------------------------------------------------------
 
             If ($Result -eq 'ACCESS-DENIED'){  #--[ Bad user or password or some other access error ]--
                 StatusMsg  "--- NO ACCESS ---   " "red"
                 $NoAccess = $True
             }
-
             If ($DeviceType -eq "Router"){
                 $SerialNum = $UID.split(":")[1]
                 $Obj | Add-Member -MemberType NoteProperty -Name "SerialNum" -Value $SerialNum -force  #-------------[ Router Serial Number ]-----------------
@@ -955,7 +1015,7 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                     $Weeks = 0
                     $Days = 0    
                     $Hours = 0
-                    $Minutes = 0 
+                    #$Minutes = 0  #--[ Not used ]--
                     ForEach ($item in $split){
                         $ErrorActionPreference = "silentlycontinue"
                         If ($item -like "*year*"){
@@ -1064,7 +1124,7 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                     $Obj | Add-Member -MemberType NoteProperty -Name "PortSpeed" -Value $PortSpd -force  #-------------[ Port Speed ]-----------------  
                     $Obj | Add-Member -MemberType NoteProperty -Name "ModelNum" -Value $ModelNum -force  #-------------[ Model Number 2nd Possible ID ]--------------- 
                 }#>
-              
+                
                 If (($Line -like "System serial*") -or ($Line -like "Top Assembly Serial Number*")){  
                     #--[ Column 6 (F) Variation 1 ]-------------------------------------------------------------------------------------------
                     $CodedDate = (($Line.Split(":")[1]).TrimStart()).SubString(3,2)   
@@ -1100,23 +1160,26 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                     $MBSerial = $Line.Split(" ")[3].Trim()
                     $Obj | Add-Member -MemberType NoteProperty -Name "MBSerialNum" -Value $MBSerial -force
                 }
-   
+    
                 If ($Line -like "Base ethernet MAC Address*"){  
                     $BaseMAC = ($Line.subString($Line.length-17)).ToUpper()
                     $Obj | Add-Member -MemberType NoteProperty -Name "BaseMAC" -Value $BaseMAC -force
                 }
 
-                #--[ Processor ]------------------------------------------------------------------
-                If (($Line -like "*CPU at*") -or ($Line -like "*) processor*")){ 
+                #--[ Processor & Model ]-----------------------------------------------------
+                If (($Line -like "*) processor*") -or ($Line -like "*CPU at*")){ 
                     #--[ Possible variations ]--
-                    # cisco WS-C3850-48P     (MIPS)     processor               with 4194304K bytes of physical memory.
-                    # cisco WS-C3560CX-8PC-S (APM86XXX) processor (revision L0) with 524288K bytes of memory.
-                    # cisco AIR-CAP3702I-A-K9 (PowerPC) processor (revision A0) with 376814K/134656K bytes of memory.
+                    # cisco WS-C4510R+E       (P5040)    processor (revision 2)  with 4194304K         bytes of physical memory.
+                    # cisco WS-C3850-48P      (MIPS)     processor               with 4194304K         bytes of physical memory.
+                    # cisco WS-C3560CX-8PC-S  (APM86XXX) processor (revision L0) with 524288K          bytes of memory.
+                    # cisco C9300-48P         (X86)      processor               with 1301503K/6147K   bytes of memory.
+                    # cisco AIR-CAP3702I-A-K9 (PowerPC)  processor (revision A0) with 376814K/134656K  bytes of memory.
+                    # cisco C9200CX-12P-2X2G  (ARM64)    processor               with 630809K/3071K    bytes of memory.
+                    # cisco C6807-XL          (M8572)    processor (revision )   with 1785856K/262144K bytes of memory.
                     # PowerPC CPU at 800Mhz, revision number 0x2151
-                    # cisco WS-C4510R+E (P5040) processor (revision 2) with 4194304K bytes of physical memory.
-                    # 2900 series routers dont report proc due to variations so all are "various"
-                    # cisco C6807-XL (M8572) processor (revision ) with 1785856K/262144K bytes of memory.
+                    # Note: 2900 series routers dont report proc due to variations so all are "various"                                        
                     #$Processor = ($Line.Split(" ")[0]) -replace '[\()\\]+'
+
                     If ($Line -like "*CPU at*"){
                         $Processor = $Line.Split(" ")[0] 
                     }Else{
@@ -1127,10 +1190,16 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                     }
                     $Obj | Add-Member -MemberType NoteProperty -Name "Processor" -Value $Processor -force   #----------------------[ Processor ]---------------   
                     $Obj | Add-Member -MemberType NoteProperty -Name "ModelNum" -Value $ModelNum -force     #----------------------[ Model Number ]---------------   
-                }#>
+                }
 
-                #--[ Calculate RAM ]--------------------------------
-                If ($Line -like "*k bytes of physical memory*"){
+                #--[ Get Model Number ]--
+                If ($Line -like "*model number*"){
+                    $ModelNum = $Line.Split(" ")[1].Trim()   
+                    $Obj | Add-Member -MemberType NoteProperty -Name "ModelNum" -Value $ModelNum -force     #----------------------[ Model Number ]---------------   
+                }
+            
+                #--[ Calculate RAM ]--------------------------------              
+                If ($Line -like "*k bytes of physical memory*"){                   
                     If ($Line -like "*C4510*"){
                         [string]$Ram1 = ($Line.Split(" ")[7]) -replace "k"  
                     }ElseIf (($Line.Split(" ")[0]) -eq "cisco"){
@@ -1138,10 +1207,10 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                     }Else{
                         [string]$Ram1 = ($Line.Split(" ")[0]) -replace "k"   
                     }
-                    $Ram = (([Int]($Ram1.split("/")[0]))+(([Int]($Ram1.split("/")[1])))) / 1024 #/ 1024
+                    [Int]$Ram = (([Int]($Ram1.split("/")[0]))+(([Int]($Ram1.split("/")[1])))) / 1024 #/ 1024
                     $Obj | Add-Member -MemberType NoteProperty -Name "RAM" -Value $Ram -force 
                 }
-                If (($Line -like "*k bytes of memory*") -and ($Line -notlike "*C9300*") -and ($Line -notlike "*ISR4331*")){
+                If (($Line -like "*k bytes of memory*") -and ($Line -notlike "*C9*") -and ($Line -notlike "*ISR4331*")){ 
                     If ($Line -like "*CISCO29*"){
                         # If ($Line -like "*AIR-CAP*"){
                         $Ram1 = ($Line.Split(" ")[5]) -replace "k"   
@@ -1151,9 +1220,9 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                     }Else{
                         $Ram1 = ($Line.Split(" ")[7]) -replace "k"   
                     }
-                    $Ram = [math]::Ceiling(([Int]($Ram1.split("/")[0])+([Int]($Ram1.split("/")[1])))/1000)                
+                    [Int]$Ram = [math]::Ceiling(([Int]($Ram1.split("/")[0])+([Int]($Ram1.split("/")[1])))/1000)                
                     $Obj | Add-Member -MemberType NoteProperty -Name "RAM" -Value $Ram -force 
-                }           #>
+                }
 
                 #--[ Last Reload ]-----------------------------------------------------------------        
                 If (($Line -like "Last reset from*") -or ($Line -like "Last reload reason*")){
@@ -1237,7 +1306,7 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                 If ($DeviceType -eq "WAP"){
                     $Obj | Add-Member -MemberType NoteProperty -Name "SwitchNum" -Value "01" -force
                 }
-           
+
                 #--[ Port Counts ]----------------------------------------------------------
                 If ($Line -like "*Gigabit Ethernet interfaces*"){
                     $GigCount = $GigCount+$Line.Split(" ")[0]
@@ -1336,7 +1405,7 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                             $ms.Close()
                         }
                         "Switch 07" {
-                           $DeviceCount++          
+                            $DeviceCount++          
                             # $Key = $Line.Split(" ")[1]
                             $Color++
                             $SwitchNum = $Line
@@ -1370,6 +1439,31 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                 $LineCnt++
             } #--[ End of Result Variable line parsing ]--
 
+            #--[ Make sure there are enough spreadsheet rows for data in case a new switch was added to a stack ]--
+            If ($DeviceCount -gt 1){  
+                StatusMsg "Not enough rows for stack.  Inserting..." "Red" $Debug
+                $DeviceRow = $Row
+                $AddRows = 0
+                $DeviceRowCnt = 0
+                While ($DeviceRowCnt -lt $DeviceCount ){
+                    $RowIP = $WorkSheet.Cells.Item($DeviceRow,1).Text 
+                    If ($RowIP -eq $IP){
+                        $DeviceRow++
+                        $DeviceRowCnt++
+                    }Else{
+                        $AddRows = $DeviceCount-$DeviceRowCnt
+                        break;break
+                    }
+                }  
+                StatusMsg "Adding $AddRows" "Magenta" $Debug    
+                $xlShiftDown = -4121
+                While ($AddRows -gt 0){
+                    $objRange = $WorkSheet.Range("A$testRow").EntireRow
+                    [void]$objRange.Insert($xlShiftDown)
+                    $AddRows--
+                }
+            }
+
             $TotalPorts = $GigCount+$FeCount+$TenGCount
             $Obj | Add-Member -MemberType NoteProperty -Name "TotalPorts" -Value $TotalPorts -force    #-------------[ Total Port Count ]-----------------
             If ($Obj.PortCount -eq ""){
@@ -1381,7 +1475,7 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                 $Obj | Add-Member -MemberType NoteProperty -Name "Connection" -Value "ISSUES (Ping OK)" -force
             }
 
-            StatusMsg "Storing processed results" "Magenta"
+            StatusMsg "Storing processed results" "Magenta" $Debug
 
             $Loop = 1
             While($Loop -le ($DeviceCount)){
@@ -1453,7 +1547,7 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                         }
                         Default {
                             #Write-Host "Port count                  :"$Obj.PortCount -ForegroundColor $color
-                            Write-Host "Switch Sequnce in Stack     :"$Obj.SwitchNum -ForegroundColor $color              
+                            Write-Host "Switch Sequence in Stack    :"$Obj.SwitchNum -ForegroundColor $color              
                         }
                     }
                 }
@@ -1462,6 +1556,8 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                     Write2Excel $WorkSheet $Row 3 "-- ACCESS DENIED --"                   #--[ Column 03 (C) ]--  
                 }Else{
                     If ($EnableExcel){   #--[ Calls Function Write2Excel ($WorkSheet,$Row,$Col,$Data,$Format,$Debug) ]--
+                        $Index = $WorkSheet.Cells($Row,1).Interior.ColorIndex             #--[ Determine existing cell color index ]--
+                        $Excel.ActiveSheet.UsedRange.Rows.Item($Row).Interior.ColorIndex = 20   #--[ Set row color to pale blur ]-- 
                         Write2Excel $WorkSheet $Row 1 $Obj.IPAddress "existing"           #--[ Column 01 (A) ]--
                         Write2Excel $WorkSheet $Row 2 $Obj.Hostname "existing"            #--[ Column 02 (B) ]-- 
                         Write2Excel $WorkSheet $Row 3 $Obj.Connection                     #--[ Column 03 (C) ]--  
@@ -1494,11 +1590,11 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                         #--[ Unique Items]
                         Switch ($DeviceType){
                             "Router" { 
-                                Write2Excel $WorkSheet $Row 29 $Obj.CID                       #--[ Column 29 (AB ]--
-                                Write2Excel $WorkSheet $Row 30 $Obj.WanIP                     #--[ Column 30 (AB) ]--
-                                Write2Excel $WorkSheet $Row 31 $Obj.RtrPorts                  #--[ Column 31 (AC) ]--
-                                Write2Excel $WorkSheet $Row 31 $Obj.RtrPorts                  #--[ Column 31 (AC) ]--
-                                $Range = $WorkSheet.Range(("A$Row"),("AC$Row")) 
+                                Write2Excel $WorkSheet $Row 29 $Obj.CID                       #--[ Column 29 (AC ]--
+                                Write2Excel $WorkSheet $Row 30 $Obj.WanIP                     #--[ Column 30 (AD) ]--
+                                Write2Excel $WorkSheet $Row 31 $Obj.RtrPorts                  #--[ Column 31 (AE) ]--
+                                Write2Excel $WorkSheet $Row 31 $Obj.RtrPorts                  #--[ Column 31 (AF) ]--
+                                $Range = $WorkSheet.Range(("A$Row"),("AF$Row")) 
                             }
                             "WAP" {
                                 Write2Excel $WorkSheet $Row 29 $Obj.HostSwitch                #--[ Column 29 (AC) ]--
@@ -1517,7 +1613,7 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                     }
 
                     $Range.HorizontalAlignment = -4131
-                    1..4 | ForEach {
+                    1..4 | ForEach-Object {
                         $Range.Borders.Item($_).LineStyle = 1
                         $Range.Borders.Item($_).Weight = 2
                     }
@@ -1540,7 +1636,7 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
                         }
                         Default {
                             $Color = 15  #--[ Gray ]--
-                            If (($NewData -eq "OK") -and ($WorkSheet.Cells.Item(3,$Col).Text )){
+                            If (($NewData -eq "OK") -and ($WorkSheet.Cells.Item($Row,$Col).Text )){
                                 $WorkSheet.UsedRange.Rows.Item($Row)
                             }
                         }  
@@ -1548,18 +1644,10 @@ ForEach ($Line in $IPList ){ #| Where {($_.Split(",")[0].tostring()) -NotLike "#
 
                     $Index = $WorkSheet.Cells($Row,1).Interior.ColorIndex  #--[ Determine existing cell color index ]--
                     If ($Index -ne $Color){   
-                    #    If ($Script:NewSpreadsheet){                  
-                            $WorkSheet.UsedRange.Rows.Item($Row-1).Interior.ColorIndex = $Color
-                     #   }Else{
-                      #      $WorkSheet.UsedRange.Rows.Item($Row).Interior.ColorIndex = $Color
-                       # }
+                        $WorkSheet.UsedRange.Rows.Item($Row).Interior.ColorIndex = $Color
                     }
                     If ($Color -eq 3){
-                    #    If ($Script:NewSpreadsheet){
-                            $WorkSheet.UsedRange.Rows.Item($Row).Font.ColorIndex = 6  #--[ Yellow text if background is red ]--
-                     #   }Else{
-                      #      $WorkSheet.UsedRange.Rows.Item($Row).Font.ColorIndex = 6  #--[ Yellow text if background is red ]--
-                       # }
+                        $WorkSheet.UsedRange.Rows.Item($Row).Font.ColorIndex = 6  #--[ Yellow text if background is red ]--
                     }
                 }  
 
